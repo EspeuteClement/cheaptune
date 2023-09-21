@@ -9,37 +9,54 @@ const c = @cImport({
 const sampleRate = 48000;
 const numChannels = 2;
 
-var time: f64 = 0.0;
-var mutex: std.Thread.Mutex = .{};
-var note: ?u8 = null;
-var cur_note: ?u8 = null;
+const Synth = struct {
+    time: f64 = 0.0,
+    mutex: std.Thread.Mutex = .{},
+    note: ?u8 = null,
+    cur_note: ?u8 = null,
 
-var prev_note: u8 = 9;
-var cur_vel: f32 = 0;
+    prev_note: u8 = 9,
+    cur_vel: f32 = 0,
 
-fn audioCallback(c_buffer: ?*anyopaque, nb_frames: c_uint) callconv(.C) void {
-    if (mutex.tryLock()) {
-        defer mutex.unlock();
-        cur_note = note;
+    pub fn render(self: *Self, buffer: [][numChannels]f32) void {
+        if (self.mutex.tryLock()) {
+            defer self.mutex.unlock();
+            self.cur_note = self.note;
+        }
+
+        self.prev_note = self.cur_note orelse self.prev_note;
+
+        const A = 440.0;
+        var freq: f32 = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.prev_note) - 9)) / 12.0);
+
+        var target_vel: f32 = if (self.cur_note != null) 0.50 else 0.0;
+        self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
+        for (buffer) |*frame| {
+            var s: f32 = if (@mod(self.time, 1.0) > 0.5) 1.0 else -1.0;
+            s *= self.cur_vel;
+            inline for (frame) |*sample| {
+                sample.* = s;
+            }
+            self.time += 1.0 / @as(f32, sampleRate) * freq;
+        }
     }
 
-    prev_note = cur_note orelse prev_note;
+    pub fn playNote(self: *Self, wanted_note: ?u8) void {
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        self.note = wanted_note;
+    }
 
+    const Self = @This();
+};
+
+var synth: Synth = .{};
+
+fn audioCallback(c_buffer: ?*anyopaque, nb_frames: c_uint) callconv(.C) void {
     var buffer: [*][2]f32 = @ptrCast(@alignCast(c_buffer.?));
     var slice: [][2]f32 = buffer[0..nb_frames];
 
-    const A = 440.0;
-    var freq: f32 = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((prev_note) - 9)) / 12.0);
-
-    var target_vel: f32 = if (cur_note != null) 0.50 else 0.0;
-    cur_vel = cur_vel + (target_vel - cur_vel) * 0.1;
-    for (slice) |*frame| {
-        var s: f32 = if (@mod(time, 1.0) > 0.5) 1.0 else -1.0;
-        s *= cur_vel;
-        frame[0] = s;
-        frame[1] = s;
-        time += 1.0 / @as(f32, sampleRate) * freq;
-    }
+    synth.render(slice);
 }
 
 fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1: ?*anyopaque, param2: ?*anyopaque) callconv(.C) void {
@@ -76,10 +93,10 @@ fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1
         if (data.status.voice_message.kind == 0b1001) {
             var ev: NoteOnEvent = @bitCast(data.data);
             if (ev.velocity == 0) {
-                if (note == ev.note)
+                if (synth.note == ev.note)
                     playNote(null);
             } else {
-                playNote(note);
+                playNote(ev.note);
             }
         }
     }
@@ -103,9 +120,7 @@ const keyboard_map = [_]rl.KeyboardKey{
 const keyboard_midi_start = 60;
 
 pub fn playNote(wanted_note: ?u8) void {
-    mutex.lock();
-    defer mutex.unlock();
-    note = wanted_note;
+    synth.playNote(wanted_note);
 }
 
 pub fn main() anyerror!void {
@@ -167,7 +182,7 @@ pub fn main() anyerror!void {
             var midi_key: u8 = @intCast(keyboard_midi_start + index);
             if (rl.isKeyPressed(key)) {
                 playNote(midi_key);
-            } else if (rl.isKeyReleased(key) and note == midi_key) {
+            } else if (rl.isKeyReleased(key) and synth.note == midi_key) {
                 playNote(null);
             }
         }
