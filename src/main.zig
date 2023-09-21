@@ -74,17 +74,38 @@ fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1
 
         // Note on
         if (data.status.voice_message.kind == 0b1001) {
-            mutex.lock();
-            defer mutex.unlock();
             var ev: NoteOnEvent = @bitCast(data.data);
             if (ev.velocity == 0) {
                 if (note == ev.note)
-                    note = null;
+                    playNote(null);
             } else {
-                note = ev.note;
+                playNote(note);
             }
         }
     }
+}
+
+const keyboard_map = [_]rl.KeyboardKey{
+    rl.KeyboardKey.key_z, // C
+    rl.KeyboardKey.key_s, // C#
+    rl.KeyboardKey.key_x, // D
+    rl.KeyboardKey.key_d, // D#
+    rl.KeyboardKey.key_c, // E
+    rl.KeyboardKey.key_v, // F
+    rl.KeyboardKey.key_g, // F#
+    rl.KeyboardKey.key_b, // G
+    rl.KeyboardKey.key_h, // G#
+    rl.KeyboardKey.key_n, // A
+    rl.KeyboardKey.key_j, // A#
+    rl.KeyboardKey.key_m, // B
+};
+
+const keyboard_midi_start = 60;
+
+pub fn playNote(wanted_note: ?u8) void {
+    mutex.lock();
+    defer mutex.unlock();
+    note = wanted_note;
 }
 
 pub fn main() anyerror!void {
@@ -141,6 +162,15 @@ pub fn main() anyerror!void {
         //----------------------------------------------------------------------------------
         // TODO: Update your variables here
         //----------------------------------------------------------------------------------
+
+        for (keyboard_map, 0..) |key, index| {
+            var midi_key: u8 = @intCast(keyboard_midi_start + index);
+            if (rl.isKeyPressed(key)) {
+                playNote(midi_key);
+            } else if (rl.isKeyReleased(key) and note == midi_key) {
+                playNote(null);
+            }
+        }
 
         // Draw
         //----------------------------------------------------------------------------------
