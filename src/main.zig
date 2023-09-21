@@ -8,6 +8,7 @@ const c = @cImport({
 
 const sampleRate = 48000;
 const numChannels = 2;
+const nyquist = sampleRate / 2;
 
 const Synth = struct {
     time: f64 = 0.0,
@@ -18,12 +19,13 @@ const Synth = struct {
     prev_note: u8 = 9,
     cur_vel: f32 = 0,
 
-    pub fn render(self: *Self, buffer: [][numChannels]f32) void {
+    const render = renderBandlimited;
+
+    pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
         if (self.mutex.tryLock()) {
             defer self.mutex.unlock();
             self.cur_note = self.note;
         }
-
         self.prev_note = self.cur_note orelse self.prev_note;
 
         const A = 440.0;
@@ -33,6 +35,39 @@ const Synth = struct {
         self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
         for (buffer) |*frame| {
             var s: f32 = if (@mod(self.time, 1.0) > 0.5) 1.0 else -1.0;
+            s *= self.cur_vel;
+            inline for (frame) |*sample| {
+                sample.* = s;
+            }
+            self.time += 1.0 / @as(f32, sampleRate) * freq;
+        }
+    }
+
+    pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
+        if (self.mutex.tryLock()) {
+            defer self.mutex.unlock();
+            self.cur_note = self.note;
+        }
+        self.prev_note = self.cur_note orelse self.prev_note;
+
+        const A = 440.0;
+        var freq: f32 = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.prev_note) - 9)) / 12.0);
+
+        var target_vel: f32 = if (self.cur_note != null) 0.50 else 0.0;
+        self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
+
+        for (buffer) |*frame| {
+            var neededHarmonics: usize = @intFromFloat(@floor(nyquist / freq));
+            neededHarmonics = @max(neededHarmonics, 10);
+            var s: f32 = 0.0;
+            for (0..neededHarmonics) |harmonic| {
+                const dcOffset = 0.5;
+                const fharmonic: f32 = @floatFromInt(harmonic);
+                var d = 2.0 * @sin(dcOffset * fharmonic * std.math.pi) / (fharmonic * std.math.pi);
+
+                s += d * @cos(@as(f32, @floatCast(self.time)) * fharmonic);
+            }
+
             s *= self.cur_vel;
             inline for (frame) |*sample| {
                 sample.* = s;
