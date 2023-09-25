@@ -1,5 +1,6 @@
 const std = @import("std");
 const rl = @import("lib/raylib-zig.zig");
+const fft = @import("fft.zig");
 
 const c = @cImport({
     @cInclude("Windows.h");
@@ -275,6 +276,30 @@ pub fn main() anyerror!void {
                     @intFromFloat(start_y + f1[0] * scale),
                     rl.Color.black,
                 );
+            }
+
+            {
+                const fft_data: [1024]fft.Cp = undefined;
+                const fft_tmp: [1024]fft.Cp = undefined;
+
+                for (fft_data, readback_slice_copy) |*cp, frame| {
+                    cp.re = frame[0] + frame[1] / 2.0;
+                    cp.im = 0;
+                }
+
+                fft.fft(&fft_data, 1024, &fft_tmp, false);
+
+                for (fft_data, 0..) |cp, i| {
+                    var fi: f32 = @floatFromInt(i);
+                    var mag = cp.magnitude();
+                    rl.drawLine(
+                        @intCast(i),
+                        @as(fi, @intFromFloat(start_y)),
+                        @intCast(i + 1),
+                        @as(fi, @intFromFloat(start_y + mag)),
+                        rl.Color.dark_gray,
+                    );
+                }
             }
         }
 
