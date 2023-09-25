@@ -58,7 +58,7 @@ const Synth = struct {
         self.prev_note = self.cur_note orelse self.prev_note;
 
         const A = 440.0;
-        var freq: f32 = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.prev_note) - 9)) / 12.0);
+        var freq: f64 = (A / 32.0) * std.math.pow(f64, 2.0, @as(f64, @floatFromInt((self.prev_note) - 9)) / 12.0);
 
         var target_vel: f32 = if (self.cur_note != null) 0.50 else 0.0;
         self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
@@ -68,7 +68,8 @@ const Synth = struct {
             inline for (frame) |*sample| {
                 sample.* = s;
             }
-            self.time += 1.0 / @as(f32, sampleRate) * freq;
+            self.time += 1.0 / @as(f64, sampleRate) * freq;
+            self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
         }
     }
 
@@ -86,13 +87,13 @@ const Synth = struct {
         self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
 
         for (buffer) |*frame| {
-            var neededHarmonics: usize = @intFromFloat(@floor(nyquist / freq));
+            var neededHarmonics: usize = @intFromFloat(@floor(nyquist / freq / 2));
             neededHarmonics = @min(neededHarmonics, 50);
             var s: f32 = 0.0;
             for (0..std.math.shr(usize, neededHarmonics, 1)) |harmonic| {
                 const fharmonic: f32 = @floatFromInt(harmonic * 2 + 1);
 
-                s += 1.0 / fharmonic * @sin(@as(f32, @floatCast(self.time * std.math.tau)) * fharmonic);
+                s += 1.0 / (fharmonic * 2.0 - 1.0) * @sin(@as(f32, @floatCast(self.time * std.math.tau)) * fharmonic);
             }
 
             s *= 1.0 / std.math.pi;
@@ -329,7 +330,11 @@ pub fn main() anyerror!void {
                 fft.fft(&fft_data, fft_size, &fft_tmp, false);
 
                 for (fft_data[0 .. fft_size / 2], 0..) |cp, i| {
-                    var mag = cp.magnitude() * 2.0;
+                    var mag = linToDb(cp.magnitude()) - linToDb(fft_size);
+                    mag = std.math.clamp(mag, -80.0, 0.0);
+                    mag = 1.0 + mag / 80.0;
+                    mag = std.math.lerp(0.0, screenHeight / 2.0, mag);
+
                     rl.drawRectangle(
                         @intCast(i * 2),
                         @intFromFloat(start_y),
