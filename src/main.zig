@@ -26,7 +26,7 @@ const Synth = struct {
     prev_note: u8 = 9,
     cur_vel: f32 = 0,
 
-    const render = renderNaive;
+    const render = renderBandlimited;
 
     pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
         if (self.mutex.tryLock()) {
@@ -50,6 +50,28 @@ const Synth = struct {
         }
     }
 
+    pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
+        if (self.mutex.tryLock()) {
+            defer self.mutex.unlock();
+            self.cur_note = self.note;
+        }
+        self.prev_note = self.cur_note orelse self.prev_note;
+
+        const A = 440.0;
+        var freq: f32 = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.prev_note) - 9)) / 12.0);
+
+        var target_vel: f32 = if (self.cur_note != null) 0.50 else 0.0;
+        self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
+        for (buffer) |*frame| {
+            var s: f32 = @floatCast(@sin(self.time * std.math.tau + @sin(self.time * std.math.tau * 2.0 + @sin(self.time * std.math.tau * 2.0))));
+            s *= self.cur_vel;
+            inline for (frame) |*sample| {
+                sample.* = s;
+            }
+            self.time += 1.0 / @as(f32, sampleRate) * freq;
+        }
+    }
+
     pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
         if (self.mutex.tryLock()) {
             defer self.mutex.unlock();
@@ -65,21 +87,22 @@ const Synth = struct {
 
         for (buffer) |*frame| {
             var neededHarmonics: usize = @intFromFloat(@floor(nyquist / freq));
-            neededHarmonics = @max(neededHarmonics, 10);
+            neededHarmonics = @min(neededHarmonics, 50);
             var s: f32 = 0.0;
-            for (0..neededHarmonics) |harmonic| {
-                const dcOffset = 0.5;
-                const fharmonic: f32 = @floatFromInt(harmonic);
-                var d = 2.0 * @sin(dcOffset * fharmonic * std.math.pi) / (fharmonic * std.math.pi);
+            for (0..std.math.shr(usize, neededHarmonics, 1)) |harmonic| {
+                const fharmonic: f32 = @floatFromInt(harmonic * 2 + 1);
 
-                s += d * @cos(@as(f32, @floatCast(self.time)) * fharmonic);
+                s += 1.0 / fharmonic * @sin(@as(f32, @floatCast(self.time * std.math.tau)) * fharmonic);
             }
+
+            s *= 1.0 / std.math.pi;
 
             s *= self.cur_vel;
             inline for (frame) |*sample| {
                 sample.* = s;
             }
             self.time += 1.0 / @as(f32, sampleRate) * freq;
+            self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
         }
     }
 
@@ -264,11 +287,22 @@ pub fn main() anyerror!void {
         const start_x: f32 = 0;
         const start_y: f32 = screenHeight / 2;
         const scale: f32 = screenHeight / 4;
-        if (readback_slice_copy.len > 1) {
-            for (0..readback_slice_copy.len - 1) |i| {
+        var start: usize = 0;
+        var prev: [2]f32 = [2]f32{ 0, 0 };
+        for (readback_slice_copy, 0..) |smp, i| {
+            if (prev[0] < 0.0 and smp[0] > 0.0) {
+                start = i;
+                break;
+            }
+            prev = smp;
+        }
+
+        var reslice = readback_slice_copy[start..];
+        if (reslice.len > 1) {
+            for (0..reslice.len - 1) |i| {
                 var fi: f32 = @floatFromInt(i);
-                var f0 = readback_slice_copy[i];
-                var f1 = readback_slice_copy[i + 1];
+                var f0 = reslice[i];
+                var f1 = reslice[i + 1];
                 rl.drawLine(
                     @intFromFloat(start_x + fi),
                     @intFromFloat(start_y + f0[0] * scale),
@@ -277,26 +311,30 @@ pub fn main() anyerror!void {
                     rl.Color.black,
                 );
             }
+        }
 
+        const fft_size = 1024;
+        if (readback_slice_copy.len > fft_size) {
             {
-                const fft_data: [1024]fft.Cp = undefined;
-                const fft_tmp: [1024]fft.Cp = undefined;
+                var fft_data: [fft_size]fft.Cp = undefined;
+                var fft_tmp: [fft_size]fft.Cp = undefined;
 
-                for (fft_data, readback_slice_copy) |*cp, frame| {
-                    cp.re = frame[0] + frame[1] / 2.0;
+                for (fft_data[0..], readback_slice_copy[0..fft_size], 0..) |*cp, frame, i| {
+                    var fi: f32 = @floatFromInt(i);
+                    var h = std.math.pow(f32, std.math.sin(fi * std.math.pi / fft_size), 2);
+                    cp.re = (frame[0] + frame[1]) / 2.0 * h;
                     cp.im = 0;
                 }
 
-                fft.fft(&fft_data, 1024, &fft_tmp, false);
+                fft.fft(&fft_data, fft_size, &fft_tmp, false);
 
-                for (fft_data, 0..) |cp, i| {
-                    var fi: f32 = @floatFromInt(i);
-                    var mag = cp.magnitude();
-                    rl.drawLine(
-                        @intCast(i),
-                        @as(fi, @intFromFloat(start_y)),
-                        @intCast(i + 1),
-                        @as(fi, @intFromFloat(start_y + mag)),
+                for (fft_data[0 .. fft_size / 2], 0..) |cp, i| {
+                    var mag = cp.magnitude() * 2.0;
+                    rl.drawRectangle(
+                        @intCast(i * 2),
+                        @intFromFloat(start_y),
+                        @intCast(2),
+                        @intFromFloat(mag),
                         rl.Color.dark_gray,
                     );
                 }
@@ -307,4 +345,13 @@ pub fn main() anyerror!void {
 
         //----------------------------------------------------------------------------------
     }
+}
+
+pub fn dbToLin(db: f32) f32 {
+    const cc = std.math.ln10 / 20.0;
+    return std.math.exp(db * cc);
+}
+
+pub fn linToDb(lin: f32) f32 {
+    return 20 * std.math.log10(lin);
 }
