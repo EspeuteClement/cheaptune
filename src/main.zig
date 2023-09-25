@@ -10,6 +10,12 @@ const sampleRate = 48000;
 const numChannels = 2;
 const nyquist = sampleRate / 2;
 
+var readback_buffer: [4096][2]f32 = undefined;
+var readback_slice: [][2]f32 = readback_buffer[0..0];
+var readback_mutex: std.Thread.Mutex = .{};
+var readback_buffer_copy: [4096][2]f32 = undefined;
+var readback_slice_copy: [][2]f32 = readback_buffer_copy[0..0];
+
 const Synth = struct {
     time: f64 = 0.0,
     mutex: std.Thread.Mutex = .{},
@@ -19,7 +25,7 @@ const Synth = struct {
     prev_note: u8 = 9,
     cur_vel: f32 = 0,
 
-    const render = renderBandlimited;
+    const render = renderNaive;
 
     pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
         if (self.mutex.tryLock()) {
@@ -92,6 +98,19 @@ fn audioCallback(c_buffer: ?*anyopaque, nb_frames: c_uint) callconv(.C) void {
     var slice: [][2]f32 = buffer[0..nb_frames];
 
     synth.render(slice);
+
+    {
+        readback_mutex.lock();
+        defer readback_mutex.unlock();
+        if (readback_slice.len + nb_frames < readback_buffer.len) {
+            var rb_slice = readback_buffer[readback_slice.len..][0..nb_frames];
+            std.debug.print("AAAAAAAA {d}, {d}\n", .{ rb_slice.len, readback_slice.len });
+            for (slice, rb_slice) |frame, *rb_frame| {
+                rb_frame.* = frame;
+            }
+            readback_slice = readback_buffer[0 .. readback_slice.len + nb_frames];
+        }
+    }
 }
 
 fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1: ?*anyopaque, param2: ?*anyopaque) callconv(.C) void {
@@ -227,9 +246,40 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
+        if (readback_mutex.tryLock()) {
+            defer readback_mutex.unlock();
+
+            if (readback_slice.len > 1024) {
+                var our_slice = readback_buffer_copy[0..readback_slice.len];
+                for (readback_slice, our_slice) |other, *our| {
+                    our.* = other;
+                }
+
+                readback_slice_copy = our_slice;
+                readback_slice = readback_buffer[0..0];
+            }
+        }
+
+        const start_x: f32 = 0;
+        const start_y: f32 = screenHeight / 2;
+        const scale: f32 = screenHeight / 4;
+        if (readback_slice_copy.len > 1) {
+            for (0..readback_slice_copy.len - 1) |i| {
+                var fi: f32 = @floatFromInt(i);
+                var f0 = readback_slice_copy[i];
+                var f1 = readback_slice_copy[i + 1];
+                rl.drawLine(
+                    @intFromFloat(start_x + fi),
+                    @intFromFloat(start_y + f0[0] * scale),
+                    @intFromFloat(start_x + fi + 1.0),
+                    @intFromFloat(start_y + f1[0] * scale),
+                    rl.Color.black,
+                );
+            }
+        }
+
         rl.clearBackground(rl.Color.white);
 
-        rl.drawText("Congrats! You created your first window!", 190, 200, 20, rl.Color.light_gray);
         //----------------------------------------------------------------------------------
     }
 }
