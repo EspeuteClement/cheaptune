@@ -429,3 +429,7 @@ pub fn dbToLin(db: f32) f32 {
 pub fn linToDb(lin: f32) f32 {
     return 20 * std.math.log10(lin);
 }
+
+test {
+    _ = @import("wav_writter.zig");
+}
