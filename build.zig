@@ -86,6 +86,7 @@ pub fn build(b: *std.Build) void {
     bench.linkLibC();
 
     const run_bench = b.addRunArtifact(bench);
+
     const run_bench_step = b.step("bench", "Run benchmark");
     run_bench_step.dependOn(&run_bench.step);
 }
