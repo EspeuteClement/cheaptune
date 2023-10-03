@@ -286,4 +286,5 @@ pub fn linToDb(lin: f32) f32 {
 
 test {
     _ = @import("wav_writter.zig");
+    _ = @import("fifo.zig");
 }
