@@ -73,4 +73,19 @@ pub fn build(b: *std.Build) void {
     // running the unit tests.
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const bench = b.addExecutable(.{
+        .name = "bench",
+        // In this case the main source file is merely a path, however, in more
+        // complicated build scripts, this could be a generated file.
+        .root_source_file = .{ .path = "src/bench.zig" },
+        .target = target,
+        .optimize = .ReleaseFast,
+    });
+
+    bench.linkLibC();
+
+    const run_bench = b.addRunArtifact(bench);
+    const run_bench_step = b.step("bench", "Run benchmark");
+    run_bench_step.dependOn(&run_bench.step);
 }
