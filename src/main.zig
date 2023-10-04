@@ -74,18 +74,31 @@ fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1
             velocity: u8,
         };
 
+        const CCEvent = packed struct {
+            cc_id: u8,
+            value: u8,
+        };
+
         var data: MidiInData = @bitCast(@as(u32, @truncate(@intFromPtr(param1))));
 
-        std.log.info("midi message : {b} : {b}", .{ @as(u8, @bitCast(data.status)), @as(u16, @bitCast(data.data)) });
+        std.log.info("midi message : {b:0>8} : {b:0>16}", .{ @as(u8, @bitCast(data.status)), @as(u16, @bitCast(data.data)) });
 
         // Note on
         if (data.status.voice_message.kind == 0b1001) {
             var ev: NoteOnEvent = @bitCast(data.data);
-            if (ev.velocity == 0) {
-                if (synth.note == ev.note)
-                    playNote(null);
-            } else {
-                playNote(ev.note);
+            synth.playNote(ev.note, ev.velocity);
+        } else if (data.status.voice_message.kind == 0b1011) {
+            var ev: CCEvent = @bitCast(data.data);
+            if (ev.cc_id == 0b111) {
+                var freq: f32 = @floatFromInt(ev.value);
+                freq = freq / 127.0;
+                const min: f32 = 20.0;
+                const max: f32 = 24000.0;
+
+                freq = min * std.math.exp(freq * @log(max / min));
+
+                std.log.info("set freq to {d:8.2}", .{freq});
+                synth.setFilter(freq);
             }
         }
     }
@@ -107,10 +120,6 @@ const keyboard_map = [_]rl.KeyboardKey{
 };
 
 const keyboard_midi_start = 60;
-
-pub fn playNote(wanted_note: ?u8) void {
-    synth.playNote(wanted_note);
-}
 
 pub fn main() anyerror!void {
 
@@ -177,9 +186,9 @@ pub fn main() anyerror!void {
         for (keyboard_map, 0..) |key, index| {
             var midi_key: u8 = @intCast(keyboard_midi_start + index);
             if (rl.isKeyPressed(key)) {
-                playNote(midi_key);
-            } else if (rl.isKeyReleased(key) and synth.note == midi_key) {
-                playNote(null);
+                synth.playNote(midi_key, 255);
+            } else if (rl.isKeyReleased(key)) {
+                synth.playNote(midi_key, 0);
             }
         }
 
