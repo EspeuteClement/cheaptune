@@ -21,7 +21,7 @@ var readback_slice_copy: [][2]f32 = readback_buffer_copy[0..0];
 var currentSynth: isize = 0;
 var currentSynthCopy: isize = 0;
 
-var synth: Synth = .{};
+var synth: Synth = undefined;
 
 fn audioCallback(c_buffer: ?*anyopaque, nb_frames: c_uint) callconv(.C) void {
     var buffer: [*][2]f32 = @ptrCast(@alignCast(c_buffer.?));
@@ -130,6 +130,13 @@ pub fn main() anyerror!void {
     var audioStream = rl.loadAudioStream(sampleRate, 32, numChannels);
     rl.setAudioStreamCallback(audioStream, audioCallback);
     rl.playAudioStream(audioStream);
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer if (gpa.deinit() == .leak) @panic("leak");
+    var alloc = gpa.allocator();
+
+    synth = try Synth.init(alloc);
+    defer synth.deinit(alloc);
 
     var numMidi = c.midiInGetNumDevs();
     std.log.info("Found {d} midi devices", .{numMidi});

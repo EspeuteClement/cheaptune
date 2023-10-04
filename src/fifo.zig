@@ -11,7 +11,7 @@ pub fn Fifo(comptime T: type) type {
         tail: Atomic(usize),
         head: Atomic(usize),
 
-        fn init(buffer: []T) Self {
+        pub fn init(buffer: []T) Self {
             return .{
                 .items = buffer,
                 .tail = Atomic(usize).init(0),
