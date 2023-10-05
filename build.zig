@@ -66,7 +66,10 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    b.installArtifact(unit_tests);
+
     const run_unit_tests = b.addRunArtifact(unit_tests);
+    run_unit_tests.step.dependOn(b.getInstallStep());
 
     // Similar to creating the run step earlier, this exposes a `test` step to
     // the `zig build --help` menu, providing a way for the user to request

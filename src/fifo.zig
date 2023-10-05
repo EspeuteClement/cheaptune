@@ -31,6 +31,34 @@ pub fn Fifo(comptime T: type) type {
             self.tail.store(next_tail, .Release);
         }
 
+        pub fn pushBuffer(self: *Self, items: []T) !void {
+            if (items.len == 0)
+                return;
+            if (items.len >= self.items.len)
+                return error.BufferTooBig;
+
+            var current_tail = self.tail.load(.Monotonic);
+
+            var next_tail = (current_tail + items.len);
+
+            var current_head = self.head.load(.Acquire);
+            if (current_head <= current_tail) {
+                current_head += self.items.len;
+            }
+
+            if (next_tail > current_head) {
+                return error.FullQueue;
+            }
+
+            next_tail %= self.items.len;
+
+            for (items, 0..) |item, i| {
+                self.items[(current_tail + i) % self.items.len] = item;
+            }
+
+            self.tail.store(next_tail, .Release);
+        }
+
         pub fn pop(self: *Self) ?T {
             const current_head = self.head.load(.Monotonic);
             if (current_head == self.tail.load(.Acquire))
@@ -93,35 +121,71 @@ test "fifo simple" {
     }
 
     try std.testing.expectEqual(@as(?usize, null), fifo.pop());
+
+    var buffer2 = [_]usize{0} ** 15;
+    for (1..15) |i| {
+        var slice = buffer2[0..i];
+        for (slice, 0..) |*s, j| {
+            s.* = j;
+        }
+        try fifo.pushBuffer(slice);
+
+        for (0..i) |j| {
+            std.testing.expectEqual(@as(?usize, j), fifo.pop()) catch @panic("AAAA");
+        }
+    }
 }
+
+const test_base_buffer_len = 128;
 
 test "fifo multithread" {
     const builtin = @import("builtin");
     try std.testing.expect(!builtin.single_threaded);
 
-    var buffer = [_]i32{0} ** 128;
+    {
+        var buffer = [_]?i32{0} ** test_base_buffer_len;
 
-    var ctx = TestCtx{
-        .fifo = Fifo(i32).init(&buffer),
-        .producerResult = 0,
-        .consumerResult = 0,
-        .count = 10000000,
-    };
+        var ctx = TestCtx{
+            .fifo = Fifo(?i32).init(&buffer),
+            .producerResult = 0,
+            .consumerResult = 0,
+            .count = 1000000,
+        };
 
-    var producer = try std.Thread.spawn(.{}, testStartProducer, .{&ctx});
-    var consumer = try std.Thread.spawn(.{}, testStartConsumer, .{&ctx});
+        var producer = try std.Thread.spawn(.{}, testStartProducer, .{&ctx});
+        var consumer = try std.Thread.spawn(.{}, testStartConsumer, .{&ctx});
 
-    producer.join();
-    consumer.join();
+        producer.join();
+        consumer.join();
 
-    try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
+        try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
+    }
+
+    {
+        var buffer = [_]?i32{0} ** test_base_buffer_len;
+
+        var ctx = TestCtx{
+            .fifo = Fifo(?i32).init(&buffer),
+            .producerResult = 0,
+            .consumerResult = 0,
+            .count = 10000,
+        };
+
+        var producer = try std.Thread.spawn(.{}, testStartProducerBuffer, .{&ctx});
+        var consumer = try std.Thread.spawn(.{}, testStartConsumer, .{&ctx});
+
+        producer.join();
+        consumer.join();
+
+        try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
+    }
 }
 
 const TestCtx = struct {
-    fifo: Fifo(i32),
+    fifo: Fifo(?i32),
     producerResult: i64,
     consumerResult: i64,
-    count: i64,
+    count: usize,
 };
 
 fn testStartProducer(ctx: *TestCtx) void {
@@ -130,30 +194,75 @@ fn testStartProducer(ctx: *TestCtx) void {
 
     var count = ctx.count;
     while (count != 0) : (count -= 1) {
-        var number = random.int(i32);
-        while (true) {
-            std.time.sleep(1); // fuzz timings using the scheduler
+        std.time.sleep(1); // fuzz timings using the scheduler
 
-            // if the queue is full (push returns an error, try again later)
-            ctx.fifo.push(number) catch continue;
-            break;
+        // if the queue is full (push returns an error, try again later)
+        var len = count % 300;
+        for (0..len) |_| {
+            var number = random.int(i32);
+            ctx.fifo.push(number) catch break;
+            ctx.producerResult += number;
         }
+    }
 
-        ctx.producerResult += number;
+    while (true) {
+        ctx.fifo.push(null) catch continue;
+        break;
     }
 }
 
 fn testStartConsumer(ctx: *TestCtx) void {
-    var count = ctx.count;
-    while (count != 0) : (count -= 1) {
-        while (true) {
-            std.time.sleep(1); // fuzz timings using the scheduler
+    loop: while (true) {
+        std.time.sleep(1); // fuzz timings using the scheduler
 
-            // Make sure we pop exactly ONE item
-            if (ctx.fifo.pop()) |item| {
-                ctx.consumerResult += item;
-                break;
+        // Pop as much items as we can
+        while (ctx.fifo.pop()) |item| {
+            if (item) |i| {
+                ctx.consumerResult += i;
+            } else {
+                // Stop the count when null is found
+                break :loop;
             }
         }
+    }
+}
+
+fn testStartProducerBuffer(ctx: *TestCtx) void {
+    var prng = std.rand.DefaultPrng.init(0xdeadbeef);
+    const random = prng.random();
+
+    // We can put a most the lenght of the main buffer - 1, so we will test all sizes
+    var buffer: [test_base_buffer_len - 1]?i32 = undefined;
+    var count = ctx.count;
+    while (count != 0) : (count -= 1) {
+        var len = count % (test_base_buffer_len - 1);
+        var subbuf = buffer[0..len];
+        for (subbuf) |*s| {
+            var number = random.int(i32);
+            s.* = number;
+            ctx.producerResult += number;
+        }
+
+        var timeout: usize = 10000;
+        while (timeout > 0) : (timeout -= 1) {
+            std.time.sleep(10);
+
+            ctx.fifo.pushBuffer(subbuf) catch |err| {
+                switch (err) {
+                    error.BufferTooBig => @panic("Buffer shouldn't be too big"),
+                    error.FullQueue => continue, // try again later
+                }
+            };
+
+            break;
+        } else {
+            // Fail the test if we can't fill the buffer for some reason
+            @panic("Timeout too many attempts at filling the buffer");
+        }
+    }
+
+    while (true) {
+        ctx.fifo.push(null) catch continue;
+        break;
     }
 }
