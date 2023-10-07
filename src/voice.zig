@@ -9,6 +9,9 @@ const sampleRate = Synth.sampleRate;
 const nyquist = Synth.nyquist;
 
 time: f64 = 0.0,
+time_lfo: f64 = 0.0,
+lfo_scale: f64 = 0.0001,
+lfo_speed: f64 = 5.0 / @as(f64, sampleRate),
 
 note: u8 = 9,
 cur_freq: f64 = 0.0,
@@ -23,6 +26,7 @@ low_pass: [numChannels]Valp1 = [_]Valp1{Valp1.init(1000.0, sampleRate)} ** numCh
 pub fn playNote(self: *Self, note: u8, vel: f32) void {
     self.note = note;
     self.velocity = vel;
+    self.time_lfo = 0;
 
     const A = 440.0;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
@@ -44,6 +48,8 @@ pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
     _ = buffer;
     var target_vel: f32 = self.velocity;
     self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
+    if (@abs(self.cur_vel) < 0.001)
+        self.cur_vel = 0.0;
 }
 
 pub fn renderCommonEnd(self: *Self, buffer: [][numChannels]f32) void {
@@ -88,6 +94,9 @@ pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
 pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
     self.renderCommon(buffer);
     defer self.renderCommonEnd(buffer);
+
+    if (self.cur_freq == 0)
+        return;
 
     for (buffer) |*frame| {
         var neededHarmonics: usize = @intFromFloat(@floor(nyquist / self.cur_freq));
@@ -140,6 +149,10 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
             sample.* = s;
         }
         self.time += @floatCast(inc);
+        self.time += @sin(self.time_lfo * std.math.tau) * self.lfo_scale;
+
+        self.time_lfo = std.math.mod(f64, self.time_lfo + self.lfo_speed, 1.0) catch unreachable;
+
         self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
     }
 }
