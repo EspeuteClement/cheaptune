@@ -2,6 +2,7 @@ const std = @import("std");
 const rl = @import("lib/raylib-zig.zig");
 const fft = @import("fft.zig");
 const Synth = @import("synth.zig");
+const Fifo = @import("fifo.zig").Fifo;
 
 const c = @cImport({
     @cInclude("Windows.h");
@@ -12,11 +13,11 @@ const sampleRate = Synth.sampleRate;
 const numChannels = Synth.numChannels;
 const nyquist = Synth.nyquist;
 
-var readback_buffer: [4096][2]f32 = undefined;
-var readback_slice: [][2]f32 = readback_buffer[0..0];
-var readback_mutex: std.Thread.Mutex = .{};
-var readback_buffer_copy: [4096][2]f32 = undefined;
-var readback_slice_copy: [][2]f32 = readback_buffer_copy[0..0];
+var readback_buffer: [1 << 14][2]f32 = undefined;
+
+var readback_fifo = Fifo([2]f32).init(&readback_buffer);
+
+var readback_buffer_copy: [1 << 14][2]f32 = undefined;
 
 var currentSynth: isize = 0;
 var currentSynthCopy: isize = 0;
@@ -27,25 +28,10 @@ fn audioCallback(c_buffer: ?*anyopaque, nb_frames: c_uint) callconv(.C) void {
     var buffer: [*][2]f32 = @ptrCast(@alignCast(c_buffer.?));
     var slice: [][2]f32 = buffer[0..nb_frames];
 
-    if (readback_mutex.tryLock()) {
-        defer readback_mutex.unlock();
-        currentSynthCopy = currentSynth;
-    }
-
     const cb = Synth.renderers[@intCast(currentSynthCopy)].cb;
     cb(&synth, slice);
 
-    {
-        readback_mutex.lock();
-        defer readback_mutex.unlock();
-        if (readback_slice.len + nb_frames < readback_buffer.len) {
-            var rb_slice = readback_buffer[readback_slice.len..][0..nb_frames];
-            for (slice, rb_slice) |frame, *rb_frame| {
-                rb_frame.* = frame;
-            }
-            readback_slice = readback_buffer[0 .. readback_slice.len + nb_frames];
-        }
-    }
+    readback_fifo.pushBuffer(slice) catch {};
 }
 
 fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1: ?*anyopaque, param2: ?*anyopaque) callconv(.C) void {
@@ -176,6 +162,9 @@ pub fn main() anyerror!void {
         _ = c.midiInStart(phmi);
     }
 
+    const font = rl.loadFont("res/cozette.fnt");
+    defer rl.unloadFont(font);
+
     // Main game loop
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
         // Update
@@ -192,31 +181,20 @@ pub fn main() anyerror!void {
             }
         }
 
-        var delta: isize = @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_subtract))) - @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_add)));
-        if (delta != 0) {
-            readback_mutex.lock();
-            defer readback_mutex.unlock();
-            currentSynth = @mod((currentSynth + delta), Synth.renderers.len);
-        }
+        // var delta: isize = @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_subtract))) - @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_add)));
+        // if (delta != 0) {
+        //     readback_mutex.lock();
+        //     defer readback_mutex.unlock();
+        //     currentSynth = @mod((currentSynth + delta), Synth.renderers.len);
+        // }
 
         // Draw
         //----------------------------------------------------------------------------------
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        if (readback_mutex.tryLock()) {
-            defer readback_mutex.unlock();
-
-            if (readback_slice.len > 1024) {
-                var our_slice = readback_buffer_copy[0..readback_slice.len];
-                for (readback_slice, our_slice) |other, *our| {
-                    our.* = other;
-                }
-
-                readback_slice_copy = our_slice;
-                readback_slice = readback_buffer[0..0];
-            }
-        }
+        const readback_slice_copy = readback_buffer_copy[0..1024];
+        while (readback_fifo.popBufferExact(readback_slice_copy)) {}
 
         const start_x: f32 = 0;
         const start_y: f32 = screenHeight / 2;
@@ -248,7 +226,7 @@ pub fn main() anyerror!void {
         }
 
         const fft_size = 1024;
-        if (readback_slice_copy.len > fft_size) {
+        if (readback_slice_copy.len >= fft_size) {
             {
                 var fft_data: [fft_size]fft.Cp = undefined;
                 var fft_tmp: [fft_size]fft.Cp = undefined;
@@ -280,9 +258,7 @@ pub fn main() anyerror!void {
         }
 
         {
-            readback_mutex.lock();
-            defer readback_mutex.unlock();
-            rl.drawText(@ptrCast(Synth.renderers[@intCast(currentSynth)].name), 8, 8, 20, rl.Color.dark_gray);
+            rl.drawTextEx(font, @ptrCast(Synth.renderers[@intCast(currentSynth)].name), .{ .x = 8, .y = 8 }, 13 * 2, 0, rl.Color.dark_gray);
         }
 
         rl.clearBackground(rl.Color.white);

@@ -94,6 +94,30 @@ pub fn Fifo(comptime T: type) type {
             return sub_buffer;
         }
 
+        // Pop exactly buffer.len number of items, or returns false if there is not enought items
+        // in the queue to satisfy the request
+        pub fn popBufferExact(self: *Self, buffer: []T) bool {
+            const current_head = self.head.load(.Monotonic);
+
+            var current_tail = self.tail.load(.Acquire);
+            if (current_head == current_tail)
+                return false;
+
+            if (current_tail < current_head) {
+                current_tail += self.items.len;
+            }
+
+            if (buffer.len > current_tail - current_head)
+                return false;
+
+            for (buffer, 0..) |*item, i| {
+                item.* = self.items[(current_head + i) % self.items.len];
+            }
+
+            self.head.store((current_head + buffer.len) % self.items.len, .Release);
+            return true;
+        }
+
         // pub fn format(value: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {}
 
         pub fn wasEmpty(self: *Self) bool {
@@ -184,6 +208,35 @@ test "fifo simple" {
             try std.testing.expectEqualSlices(usize, slice, popped_buffer);
         }
     }
+
+    try std.testing.expectEqual(@as(?usize, null), fifo.pop());
+
+    // Test popBufferExact
+    try fifo.push(1);
+    try fifo.push(1);
+
+    var buffer4 = [_]usize{0} ** 4;
+    try std.testing.expect(!fifo.popBufferExact(&buffer4));
+
+    try fifo.push(1);
+    try fifo.push(1);
+    try std.testing.expect(fifo.popBufferExact(&buffer4));
+
+    try fifo.push(1);
+    try fifo.push(1);
+    try fifo.push(1);
+    try fifo.push(1);
+
+    try fifo.push(1);
+    try fifo.push(1);
+    try fifo.push(1);
+    try fifo.push(1);
+
+    try std.testing.expect(fifo.popBufferExact(&buffer4));
+    try std.testing.expect(fifo.popBufferExact(&buffer4));
+    try std.testing.expect(!fifo.popBufferExact(&buffer4));
+
+    try std.testing.expectEqual(@as(?usize, null), fifo.pop());
 }
 
 test "fifo buffer fuzz" {

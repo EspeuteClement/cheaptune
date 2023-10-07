@@ -52,6 +52,8 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
+    run_cmd.cwd = b.exe_dir;
+
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`
     // This will evaluate the `run` step rather than the default, which is "install".
@@ -66,7 +68,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
-    b.installArtifact(unit_tests);
+    b.installDirectory(.{ .source_dir = std.build.LazyPath.relative("res"), .install_dir = .bin, .install_subdir = "res" });
+
+    //b.installArtifact(unit_tests);
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
