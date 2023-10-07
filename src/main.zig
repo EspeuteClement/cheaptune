@@ -2,6 +2,7 @@ const std = @import("std");
 const rl = @import("lib/raylib-zig.zig");
 const fft = @import("fft.zig");
 const Synth = @import("synth.zig");
+const Voice = @import("voice.zig");
 const Fifo = @import("fifo.zig").Fifo;
 
 const c = @cImport({
@@ -181,7 +182,7 @@ pub fn main() anyerror!void {
 
         var delta: isize = @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_subtract))) - @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_add)));
         if (delta != 0) {
-            currentSynth = @mod((currentSynth + delta), Synth.renderers.len);
+            currentSynth = @mod((currentSynth + delta), Voice.renderers.len);
             synth.setRenderer(@intCast(currentSynth));
         }
 
@@ -262,7 +263,7 @@ pub fn main() anyerror!void {
         }
 
         {
-            rl.drawTextEx(font, @ptrCast(Synth.renderers[@intCast(currentSynth)].name), .{ .x = 8, .y = 8 }, 13, 0, rl.Color.dark_gray);
+            rl.drawTextEx(font, @ptrCast(Voice.renderers[@intCast(currentSynth)].name), .{ .x = 8, .y = 8 }, 13, 0, rl.Color.dark_gray);
         }
 
         rl.clearBackground(rl.Color.white);
