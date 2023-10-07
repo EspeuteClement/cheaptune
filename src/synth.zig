@@ -1,6 +1,7 @@
 const std = @import("std");
 const Fifo = @import("fifo.zig").Fifo;
 const Voice = @import("voice.zig");
+const DCBlocker = @import("dcblocker.zig");
 
 pub const sampleRate = 48000;
 pub const numChannels = 2;
@@ -22,6 +23,7 @@ commands: Fifo(Command),
 voices: [8]Voice = [_]Voice{.{}} ** 8,
 workBuffer: [1024][numChannels]f32 = undefined,
 current_renderer: usize = 0,
+dc_blockers: [numChannels]DCBlocker = [_]DCBlocker{.{}} ** numChannels,
 
 // ==================================================
 // ================ MAIN THREAD API =================
@@ -98,6 +100,12 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                     o.* += s;
                 }
             }
+        }
+    }
+
+    for (buffer) |*frame| {
+        inline for (frame, 0..) |*sample, i| {
+            sample.* = self.dc_blockers[i].tick(sample.*);
         }
     }
 }

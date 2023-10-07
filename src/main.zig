@@ -98,7 +98,7 @@ const keyboard_map = [_]rl.KeyboardKey{
     rl.KeyboardKey.key_v, // F
     rl.KeyboardKey.key_g, // F#
     rl.KeyboardKey.key_b, // G
-    rl.KeyboardKey.key_h, // G#
+    rl.KeyboardKey.key_h, // G#x&
     rl.KeyboardKey.key_n, // A
     rl.KeyboardKey.key_j, // A#
     rl.KeyboardKey.key_m, // B
