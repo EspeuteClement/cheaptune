@@ -20,7 +20,6 @@ var readback_fifo = Fifo([2]f32).init(&readback_buffer);
 var readback_buffer_copy: [1 << 14][2]f32 = undefined;
 
 var currentSynth: isize = 0;
-var currentSynthCopy: isize = 0;
 
 var synth: Synth = undefined;
 
@@ -28,8 +27,7 @@ fn audioCallback(c_buffer: ?*anyopaque, nb_frames: c_uint) callconv(.C) void {
     var buffer: [*][2]f32 = @ptrCast(@alignCast(c_buffer.?));
     var slice: [][2]f32 = buffer[0..nb_frames];
 
-    const cb = Synth.renderers[@intCast(currentSynthCopy)].cb;
-    cb(&synth, slice);
+    synth.render(slice);
 
     readback_fifo.pushBuffer(slice) catch {};
 }
@@ -181,12 +179,11 @@ pub fn main() anyerror!void {
             }
         }
 
-        // var delta: isize = @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_subtract))) - @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_add)));
-        // if (delta != 0) {
-        //     readback_mutex.lock();
-        //     defer readback_mutex.unlock();
-        //     currentSynth = @mod((currentSynth + delta), Synth.renderers.len);
-        // }
+        var delta: isize = @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_subtract))) - @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_add)));
+        if (delta != 0) {
+            currentSynth = @mod((currentSynth + delta), Synth.renderers.len);
+            synth.setRenderer(@intCast(currentSynth));
+        }
 
         // Draw
         //----------------------------------------------------------------------------------
@@ -197,7 +194,7 @@ pub fn main() anyerror!void {
         while (readback_fifo.popBufferExact(readback_slice_copy)) {}
 
         const start_x: f32 = 0;
-        const start_y: f32 = screenHeight / 2;
+        var start_y: f32 = screenHeight / 2;
         const scale: f32 = screenHeight / 4;
         var start: usize = 0;
         var prev: [2]f32 = [2]f32{ 0, 0 };
@@ -225,6 +222,7 @@ pub fn main() anyerror!void {
             }
         }
 
+        start_y = screenHeight;
         const fft_size = 1024;
         if (readback_slice_copy.len >= fft_size) {
             {
@@ -240,25 +238,31 @@ pub fn main() anyerror!void {
 
                 fft.fft(&fft_data, fft_size, &fft_tmp, false);
 
-                for (fft_data[0 .. fft_size / 2], 0..) |cp, i| {
+                var prev_mag: f32 = 0.0;
+                for (0..fft_size / 2) |i| {
+                    var cp = fft_data[i];
                     var mag = linToDb(cp.magnitude()) - linToDb(fft_size);
+
                     mag = std.math.clamp(mag, -80.0, 0.0);
                     mag = 1.0 + mag / 80.0;
                     mag = std.math.lerp(0.0, screenHeight / 2.0, mag);
 
-                    rl.drawRectangle(
-                        @intCast(i),
-                        @intFromFloat(start_y),
-                        @intCast(1),
-                        @intFromFloat(mag),
-                        rl.Color.dark_gray,
-                    );
+                    if (i > 0) {
+                        rl.drawLine(
+                            @intCast(i - 1),
+                            @intFromFloat(start_y - prev_mag),
+                            @intCast(i),
+                            @intFromFloat(start_y - mag),
+                            rl.Color.dark_gray,
+                        );
+                    }
+                    prev_mag = mag;
                 }
             }
         }
 
         {
-            rl.drawTextEx(font, @ptrCast(Synth.renderers[@intCast(currentSynth)].name), .{ .x = 8, .y = 8 }, 13 * 2, 0, rl.Color.dark_gray);
+            rl.drawTextEx(font, @ptrCast(Synth.renderers[@intCast(currentSynth)].name), .{ .x = 8, .y = 8 }, 13, 0, rl.Color.dark_gray);
         }
 
         rl.clearBackground(rl.Color.white);

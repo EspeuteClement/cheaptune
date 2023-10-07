@@ -6,15 +6,14 @@ pub const sampleRate = 48000;
 pub const numChannels = 2;
 pub const nyquist = sampleRate / 2;
 
-const Command = union(enum) {
-    noteOn: struct {
-        velocity: u8,
-        note: u8,
-    },
-    setFilter: struct {
-        freq: f32,
-    },
-};
+const Command = union(enum) { noteOn: struct {
+    velocity: u8,
+    note: u8,
+}, setFilter: struct {
+    freq: f32,
+}, setRenderer: struct {
+    wanted: usize,
+} };
 
 const Synth = @This();
 
@@ -32,6 +31,12 @@ cur_vel: f32 = 0.0,
 
 low_pass: [numChannels]Valp1 = [_]Valp1{Valp1.init(1000.0, sampleRate)} ** numChannels,
 
+current_renderer: usize = 0,
+
+// ==================================================
+// ================ MAIN THREAD API =================
+// ==================================================
+
 pub fn init(allocator: std.mem.Allocator) !Synth {
     var synth = Synth{
         .commands = Fifo(Command).init(try allocator.alloc(Command, 128)),
@@ -44,10 +49,24 @@ pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.free(self.commands.items);
 }
 
-pub const render = renderBandlimited;
+pub fn playNote(self: *Self, wanted_note: u8, velocity: u8) void {
+    var note = @max(9, wanted_note);
+    self.commands.push(.{ .noteOn = .{ .note = note, .velocity = velocity } }) catch {};
+}
 
-pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
-    _ = buffer;
+pub fn setFilter(self: *Self, freq: f32) void {
+    self.commands.push(.{ .setFilter = .{ .freq = freq } }) catch {};
+}
+
+pub fn setRenderer(self: *Self, wanted: usize) void {
+    self.commands.push(.{ .setRenderer = .{ .wanted = wanted } }) catch {};
+}
+
+// ==================================================
+// ================ AUDIO THREAD API ================
+// ==================================================
+
+pub fn render(self: *Self, buffer: [][numChannels]f32) void {
     while (self.commands.pop()) |command| {
         switch (command) {
             .noteOn => |cmd| {
@@ -65,9 +84,18 @@ pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
                     filter.setFreq(cmd.freq);
                 }
             },
+            .setRenderer => |cmd| {
+                self.current_renderer = @mod(cmd.wanted, renderers.len);
+            },
         }
     }
 
+    const cb = renderers[self.current_renderer];
+    cb.cb(self, buffer);
+}
+
+pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
+    _ = buffer;
     var target_vel: f32 = self.velocity;
     self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
 }
@@ -174,14 +202,5 @@ pub const renderers = [_]struct { name: []const u8, cb: *const fn (*Self, [][2]f
     .{ .name = "Sine", .cb = &renderSine },
     .{ .name = "Band Limited", .cb = &renderBandlimited },
 };
-
-pub fn playNote(self: *Self, wanted_note: u8, velocity: u8) void {
-    var note = @max(9, wanted_note);
-    self.commands.push(.{ .noteOn = .{ .note = note, .velocity = velocity } }) catch {};
-}
-
-pub fn setFilter(self: *Self, freq: f32) void {
-    self.commands.push(.{ .setFilter = .{ .freq = freq } }) catch {};
-}
 
 const Self = @This();
