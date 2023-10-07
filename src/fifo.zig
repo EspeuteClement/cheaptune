@@ -37,16 +37,16 @@ pub fn Fifo(comptime T: type) type {
             if (items.len >= self.items.len)
                 return error.BufferTooBig;
 
-            var current_tail = self.tail.load(.Monotonic);
+            var current_tail = self.tail.load(.SeqCst);
 
             var next_tail = (current_tail + items.len);
 
-            var current_head = self.head.load(.Acquire);
+            var current_head = self.head.load(.SeqCst);
             if (current_head <= current_tail) {
                 current_head += self.items.len;
             }
 
-            if (next_tail > current_head) {
+            if (next_tail >= current_head) {
                 return error.FullQueue;
             }
 
@@ -56,7 +56,7 @@ pub fn Fifo(comptime T: type) type {
                 self.items[(current_tail + i) % self.items.len] = item;
             }
 
-            self.tail.store(next_tail, .Release);
+            self.tail.store(next_tail, .SeqCst);
         }
 
         pub fn pop(self: *Self) ?T {
@@ -68,6 +68,33 @@ pub fn Fifo(comptime T: type) type {
             self.head.store(self.increment(current_head), .Release);
             return item;
         }
+
+        // Returns a slice of `buffer` that will contains at most `buffer.len` items or less
+        // if the buffer has not enough items loaded.
+        pub fn popBuffer(self: *Self, buffer: []T) []T {
+            const current_head = self.head.load(.Monotonic);
+
+            var current_tail = self.tail.load(.Acquire);
+            if (current_head == current_tail)
+                return buffer[0..0];
+
+            if (current_tail < current_head) {
+                current_tail += self.items.len;
+            }
+
+            var items_to_pop = @min(buffer.len, current_tail - current_head);
+
+            var sub_buffer = buffer[0..items_to_pop];
+
+            for (sub_buffer, 0..) |*item, i| {
+                item.* = self.items[(current_head + i) % self.items.len];
+            }
+
+            self.head.store((current_head + items_to_pop) % self.items.len, .Release);
+            return sub_buffer;
+        }
+
+        // pub fn format(value: Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {}
 
         pub fn wasEmpty(self: *Self) bool {
             return self.head.load(.Monotonic) == self.tail.load(.Monotonic);
@@ -122,7 +149,7 @@ test "fifo simple" {
 
     try std.testing.expectEqual(@as(?usize, null), fifo.pop());
 
-    var buffer2 = [_]usize{0} ** 15;
+    var buffer2 = [_]usize{0} ** 32;
     for (1..15) |i| {
         var slice = buffer2[0..i];
         for (slice, 0..) |*s, j| {
@@ -131,9 +158,143 @@ test "fifo simple" {
         try fifo.pushBuffer(slice);
 
         for (0..i) |j| {
-            std.testing.expectEqual(@as(?usize, j), fifo.pop()) catch @panic("AAAA");
+            try std.testing.expectEqual(@as(?usize, j), fifo.pop());
         }
     }
+
+    try std.testing.expectEqual(@as(?usize, null), fifo.pop());
+
+    var buffer3 = [_]usize{0} ** 32;
+    for (1..18) |i| {
+        var slice = buffer2[0..i];
+        for (slice, 0..) |*s, j| {
+            s.* = j;
+        }
+
+        var fail = false;
+        fifo.pushBuffer(slice) catch {
+            fail = true;
+        };
+
+        var slice3 = buffer3[0..i];
+        var popped_buffer = fifo.popBuffer(slice3);
+        if (fail) {
+            try std.testing.expectEqual(@as([]usize, slice3[0..0]), popped_buffer);
+        } else {
+            try std.testing.expectEqualSlices(usize, slice, popped_buffer);
+        }
+    }
+}
+
+test "fifo buffer fuzz" {
+    const size = 16;
+    var buffer_fifo = [_]usize{0} ** size;
+    var fifo = Fifo(usize).init(&buffer_fifo);
+
+    var buffer = [_]usize{1} ** (size * 2);
+
+    for (0..size) |tail| {
+        for (0..size) |head| {
+            for (0..size * 2) |subsize| {
+                fifo.head.store(head, .SeqCst);
+                fifo.tail.store(tail, .SeqCst);
+                @memset(buffer_fifo[0..], 0);
+
+                var expect = subsize;
+
+                var startFifo = fifo;
+
+                var subbuf = buffer[0..subsize];
+                fifo.pushBuffer(subbuf) catch {
+                    var len = @mod(@as(isize, @intCast(head)) - @as(isize, @intCast(tail)), size);
+                    std.testing.expect(subsize >= (len - 1)) catch |e| {
+                        std.log.err("Couldn't push {d} items but buffer had remaining size of {d} (fifo : {any})", .{ subsize, len, fifo });
+                        return e;
+                    };
+                    expect = 0;
+                };
+
+                var sum: usize = 0;
+                for (buffer_fifo) |item| {
+                    sum += item;
+                }
+
+                std.testing.expectEqual(expect, sum) catch |e| {
+                    std.log.err("Push {d} items but fifo has {d} items in it (fifo : {any})", .{ expect, sum, fifo });
+                    return e;
+                };
+
+                var prevFifo = fifo;
+                var sum_pop: usize = 0;
+                while (fifo.pop()) |item| {
+                    sum_pop += item;
+                }
+
+                std.testing.expectEqual(expect, sum_pop) catch |e| {
+                    std.log.err("Push {d} items but could only pop {d} items in it.\n(start: {any})\n(prev : {any})\n(curr : {any})", .{ expect, sum_pop, startFifo, prevFifo, fifo });
+                    return e;
+                };
+            }
+        }
+    }
+}
+
+test "fifo singlethread" {
+    const size = 16;
+    var buffer_fifo = [_]?i32{0} ** size;
+
+    var ctx = TestCtx{
+        .fifo = Fifo(?i32).init(&buffer_fifo),
+        .producerResult = 0,
+        .consumerResult = 0,
+        .count = 1_000_000,
+    };
+
+    var prng = std.rand.DefaultPrng.init(0xdeadbeef);
+    const random = prng.random();
+
+    var buffer: [size - 1]?i32 = undefined;
+
+    var count = ctx.count;
+    mainLoop: while (true) {
+        if (count > 0) {
+            var len = count % (size - 1);
+            var subbuf = buffer[0..len];
+            for (subbuf) |*s| {
+                var number: i32 = random.int(u8);
+                s.* = number;
+            }
+
+            var is_err = false;
+            ctx.fifo.pushBuffer(subbuf) catch {
+                is_err = true;
+            };
+
+            if (!is_err) {
+                for (subbuf) |s| {
+                    ctx.producerResult += s.?;
+                }
+                count -= 1;
+            }
+        } else {
+            ctx.fifo.push(null) catch {};
+        }
+
+        var random_pop = random.intRangeAtMost(usize, 0, 32);
+        for (0..random_pop) |_| {
+            if (ctx.fifo.pop()) |item| {
+                if (item) |i| {
+                    ctx.consumerResult += i;
+                } else {
+                    break :mainLoop;
+                }
+            } else {
+                break;
+            }
+        }
+    }
+
+    try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
 }
 
 const test_base_buffer_len = 128;
@@ -142,43 +303,44 @@ test "fifo multithread" {
     const builtin = @import("builtin");
     try std.testing.expect(!builtin.single_threaded);
 
-    {
-        var buffer = [_]?i32{0} ** test_base_buffer_len;
+    const producersFn = [_][]const u8{ "testStartProducer", "testStartProducerBuffer" };
+    const consumersFn = [_][]const u8{ "testStartConsumer", "testStartConsumerBuffer" };
 
-        var ctx = TestCtx{
-            .fifo = Fifo(?i32).init(&buffer),
-            .producerResult = 0,
-            .consumerResult = 0,
-            .count = 1000000,
-        };
+    inline for (producersFn) |prod_fn_name| {
+        inline for (consumersFn) |cons_fn_name| {
+            const prod_fn = @field(@This(), prod_fn_name);
+            const cons_fn = @field(@This(), cons_fn_name);
 
-        var producer = try std.Thread.spawn(.{}, testStartProducer, .{&ctx});
-        var consumer = try std.Thread.spawn(.{}, testStartConsumer, .{&ctx});
-
-        producer.join();
-        consumer.join();
-
-        try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
+            testMultithread(prod_fn, cons_fn) catch |e| {
+                std.log.err("Multithread fail with producer {s} and consumer {s}", .{ prod_fn_name, cons_fn_name });
+                return e;
+            };
+        }
     }
+}
 
-    {
-        var buffer = [_]?i32{0} ** test_base_buffer_len;
+fn testMultithread(comptime prodFn: anytype, comptime consFn: anytype) !void {
+    // We push ctx.count random items from the producer buffer to the consumer buffer,
+    // keeping a sum of all the items on both ends. When the producer thread has finished,
+    // it pushes a null item, signalign to the consumer buffer to stop the count and return.
+    // If the sums are equals at the end, we are good.
 
-        var ctx = TestCtx{
-            .fifo = Fifo(?i32).init(&buffer),
-            .producerResult = 0,
-            .consumerResult = 0,
-            .count = 10000,
-        };
+    var buffer = [_]?i32{0} ** test_base_buffer_len;
 
-        var producer = try std.Thread.spawn(.{}, testStartProducerBuffer, .{&ctx});
-        var consumer = try std.Thread.spawn(.{}, testStartConsumer, .{&ctx});
+    var ctx = TestCtx{
+        .fifo = Fifo(?i32).init(&buffer),
+        .producerResult = 0,
+        .consumerResult = 0,
+        .count = 100_000,
+    };
 
-        producer.join();
-        consumer.join();
+    var producer = try std.Thread.spawn(.{}, prodFn, .{&ctx});
+    var consumer = try std.Thread.spawn(.{}, consFn, .{&ctx});
 
-        try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
-    }
+    producer.join();
+    consumer.join();
+
+    try std.testing.expectEqual(ctx.producerResult, ctx.consumerResult);
 }
 
 const TestCtx = struct {
@@ -238,7 +400,7 @@ fn testStartProducerBuffer(ctx: *TestCtx) void {
         var len = count % (test_base_buffer_len - 1);
         var subbuf = buffer[0..len];
         for (subbuf) |*s| {
-            var number = random.int(i32);
+            var number: i32 = random.int(u31);
             s.* = number;
             ctx.producerResult += number;
         }
@@ -264,5 +426,25 @@ fn testStartProducerBuffer(ctx: *TestCtx) void {
     while (true) {
         ctx.fifo.push(null) catch continue;
         break;
+    }
+}
+
+fn testStartConsumerBuffer(ctx: *TestCtx) void {
+    var buffer: [test_base_buffer_len]?i32 = undefined;
+    var slice = buffer[0..];
+
+    loop: while (true) {
+        std.time.sleep(1); // fuzz timings using the scheduler
+
+        var items = ctx.fifo.popBuffer(slice);
+
+        for (items) |item| {
+            if (item) |i| {
+                ctx.consumerResult += i;
+            } else {
+                // Stop the count when null is found
+                break :loop;
+            }
+        }
     }
 }
