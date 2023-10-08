@@ -4,6 +4,7 @@ const fft = @import("fft.zig");
 const Synth = @import("synth.zig");
 const Voice = @import("voice.zig");
 const Fifo = @import("fifo.zig").Fifo;
+const Midi = @import("midi.zig");
 
 const c = @cImport({
     @cInclude("Windows.h");
@@ -104,6 +105,8 @@ const keyboard_map = [_]rl.KeyboardKey{
     rl.KeyboardKey.key_m, // B
 };
 
+const midi_raw_data = @embedFile("tests/test_midi.mid");
+
 const keyboard_midi_start = 60;
 
 pub fn main() anyerror!void {
@@ -121,16 +124,21 @@ pub fn main() anyerror!void {
 
     rl.initAudioDevice();
 
-    var audioStream = rl.loadAudioStream(sampleRate, 32, numChannels);
-    rl.setAudioStreamCallback(audioStream, audioCallback);
-    rl.playAudioStream(audioStream);
-
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer if (gpa.deinit() == .leak) @panic("leak");
     var alloc = gpa.allocator();
 
+    var midi = try Midi.parse(midi_raw_data[0..], alloc);
+    defer midi.deinit(alloc);
+
     synth = try Synth.init(alloc);
     defer synth.deinit(alloc);
+
+    try synth.commands.push(.{ .playMidi = .{ .midi = &midi } });
+
+    var audioStream = rl.loadAudioStream(sampleRate, 32, numChannels);
+    rl.setAudioStreamCallback(audioStream, audioCallback);
+    rl.playAudioStream(audioStream);
 
     var numMidi = c.midiInGetNumDevs();
     std.log.info("Found {d} midi devices", .{numMidi});

@@ -101,7 +101,7 @@ const MidiEventKind = enum(u8) {
     }
 };
 
-division: u24,
+division: u16,
 tracks: [][]Event = &.{},
 
 pub fn parse(bytes: []const u8, allocator: std.mem.Allocator) !Midi {
@@ -268,6 +268,15 @@ pub fn parseMidiEvent(stream: *[]const u8, first_byte: u8, previous: ?MidiEventK
         .ActiveSensing => .ActiveSensing,
         .Reset => .Reset,
     };
+}
+
+pub fn tempoToTicksPerSamples(midi_tempo: u24, ticks_per_quarternote: u16, sample_rate: u32) f32 {
+    var tempo: f32 = @floatFromInt(midi_tempo);
+    var fsr: f32 = @floatFromInt(sample_rate);
+    var fticks_per_quarternote: f32 = @floatFromInt(ticks_per_quarternote);
+
+    var tick_len_s = (tempo / std.time.us_per_s) / fticks_per_quarternote;
+    return tick_len_s * fsr;
 }
 
 fn parseMetaMessage(stream: *[]const u8) !?Event.Data.Meta {
