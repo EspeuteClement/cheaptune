@@ -38,55 +38,59 @@ fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1
     _ = midi_in;
     _ = instance;
     _ = param2;
-    std.log.info("win in message : {d}", .{msg});
+    //std.log.info("win in message : {d}", .{msg});
 
     if (msg == c.MIM_DATA) {
-        const Status = packed union {
-            voice_message: packed struct {
-                channel: u4,
-                kind: u4,
-            },
-            system: u8,
-        };
+        var data: [4]u8 = @bitCast(@as(u32, @truncate(@intFromPtr(param1))));
+        var slice: []u8 = data[1..];
+        var ev_or_null = Midi.parseMidiEvent(&slice, data[0], null) catch null;
 
-        const MidiInData = packed struct {
-            status: Status,
-            data: u16,
-            __unused: u8,
-        };
+        //std.log.info("midi message : {b:0>8} : {b:0>16}", .{ @as(u8, @bitCast(data.status)), @as(u16, @bitCast(data.data)) });
 
-        const NoteOnEvent = packed struct {
-            note: u8,
-            velocity: u8,
-        };
-
-        const CCEvent = packed struct {
-            cc_id: u8,
-            value: u8,
-        };
-
-        var data: MidiInData = @bitCast(@as(u32, @truncate(@intFromPtr(param1))));
-
-        std.log.info("midi message : {b:0>8} : {b:0>16}", .{ @as(u8, @bitCast(data.status)), @as(u16, @bitCast(data.data)) });
-
-        // Note on
-        if (data.status.voice_message.kind == 0b1001) {
-            var ev: NoteOnEvent = @bitCast(data.data);
-            synth.playNote(ev.note, ev.velocity);
-        } else if (data.status.voice_message.kind == 0b1011) {
-            var ev: CCEvent = @bitCast(data.data);
-            if (ev.cc_id == 0b111) {
-                var freq: f32 = @floatFromInt(ev.value);
-                freq = freq / 127.0;
-                const min: f32 = 20.0;
-                const max: f32 = 24000.0;
-
-                freq = min * std.math.exp(freq * @log(max / min));
-
-                std.log.info("set freq to {d:8.2}", .{freq});
-                synth.setFilter(freq);
+        if (ev_or_null) |ev| {
+            switch (ev) {
+                .NoteOn => |d| {
+                    synth.playNote(d.note, d.velocity);
+                },
+                .NoteOff => |d| {
+                    synth.playNote(d.note, 0);
+                },
+                .ControlChange => |d| {
+                    if (d.controller_id == 0b111) {
+                        var freq: f32 = @floatFromInt(d.value);
+                        freq = freq / 127.0;
+                        const min: f32 = 20.0;
+                        const max: f32 = 24000.0;
+                        freq = min * std.math.exp(freq * @log(max / min));
+                        std.log.info("set freq to {d:8.2}", .{freq});
+                        synth.setFilter(freq);
+                    } else {
+                        std.log.info("unhandeld midi message : {any}", .{d});
+                    }
+                },
+                else => |d| {
+                    std.log.info("unhandeld midi message : {any}", .{d});
+                },
             }
         }
+        // Note on
+        // if (data.status.voice_message.kind == 0b1001) {
+        //     var ev: NoteOnEvent = @bitCast(data.data);
+        //     synth.playNote(ev.note, ev.velocity);
+        // } else if (data.status.voice_message.kind == 0b1011) {
+        //     var ev: CCEvent = @bitCast(data.data);
+        //     if (ev.cc_id == 0b111) {
+        //         var freq: f32 = @floatFromInt(ev.value);
+        //         freq = freq / 127.0;
+        //         const min: f32 = 20.0;
+        //         const max: f32 = 24000.0;
+
+        //         freq = min * std.math.exp(freq * @log(max / min));
+
+        //         std.log.info("set freq to {d:8.2}", .{freq});
+        //         synth.setFilter(freq);
+        //     }
+        // }
     }
 }
 
@@ -144,24 +148,30 @@ pub fn main() anyerror!void {
     std.log.info("Found {d} midi devices", .{numMidi});
 
     if (numMidi > 0) {
-        var id: u8 = 0;
+        var id = brk: {
+            for (0..numMidi) |id| {
+                var info: c.MIDIINCAPSA = undefined;
+                var status = c.midiInGetDevCapsA(@intCast(id), &info, @sizeOf(c.MIDIINCAPSA));
+                if (!std.mem.startsWith(u8, &info.szPname, "loopMIDI")) {
+                    continue;
+                }
 
-        {
-            var info: c.MIDIINCAPSA = undefined;
-            var status = c.midiInGetDevCapsA(id, &info, @sizeOf(c.MIDIINCAPSA));
-            if (status != c.MMSYSERR_NOERROR) {
-                std.log.err("Couldn't retrieve info for midi device {d}, errno : {d}", .{ id, status });
-            } else {
-                var pos = std.mem.indexOfScalar(u8, &info.szPname, 0);
-                var name = info.szPname[0 .. pos orelse 32];
+                if (status != c.MMSYSERR_NOERROR) {
+                    std.log.err("Couldn't retrieve info for midi device {d}, errno : {d}", .{ id, status });
+                } else {
+                    var pos = std.mem.indexOfScalar(u8, &info.szPname, 0);
+                    var name = info.szPname[0 .. pos orelse 32];
 
-                std.log.info("Found midi device with id {d} and name {s}", .{ id, name });
+                    std.log.info("Found midi device with id {d} and name {s}", .{ id, name });
+                    break :brk id;
+                }
             }
-        }
+            break :brk 0;
+        };
 
         var phmi: c.HMIDIIN = undefined;
         const CALLBACK_FUNCTION = 0x00030000;
-        var status = c.midiInOpen(&phmi, id, @intFromPtr(&midiInCallback), 0, CALLBACK_FUNCTION);
+        var status = c.midiInOpen(&phmi, @intCast(id), @intFromPtr(&midiInCallback), 0, CALLBACK_FUNCTION);
         if (status != c.MMSYSERR_NOERROR) {
             std.log.err("Couldn't open midi device {d}, errno : {d}", .{ id, status });
         }
