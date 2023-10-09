@@ -23,6 +23,7 @@ const Command = union(enum) {
     playMidi: struct {
         midi: *Midi,
     },
+    midiIn: Midi.Event.Data.MidiEvent.MidiEventData,
 };
 
 const Synth = @This();
@@ -62,6 +63,10 @@ pub fn playNote(self: *Self, wanted_note: u8, velocity: u8) void {
 
 pub fn setFilter(self: *Self, freq: f32) void {
     self.commands.push(.{ .setFilter = .{ .freq = freq } }) catch {};
+}
+
+pub fn midiIn(self: *Self, message: Midi.Event.Data.MidiEvent.MidiEventData) void {
+    self.commands.push(.{ .midiIn = message }) catch {};
 }
 
 pub fn setRenderer(self: *Self, wanted: usize) void {
@@ -126,6 +131,32 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             },
             .playMidi => |midi| {
                 self.startMidi(midi.midi);
+            },
+            .midiIn => |ev| {
+                switch (ev) {
+                    .NoteOn => |cmd| {
+                        var voice = self.allocateVoice();
+                        voice.playNote(cmd.note, @as(f32, @floatFromInt(cmd.velocity)) / 255.0);
+                    },
+                    .NoteOff => |cmd| {
+                        for (&self.voices) |*voice| {
+                            if (voice.note == cmd.note) {
+                                voice.release();
+                            }
+                        }
+                    },
+                    .ControlChange => |cmd| {
+                        for (&self.voices) |*voice| {
+                            switch (cmd.controller_id) {
+                                0b111 => {
+                                    voice.setFilter(Midi.midiToLogRange(cmd.value, 20.0, 24000.0));
+                                },
+                                else => {},
+                            }
+                        }
+                    },
+                    else => {},
+                }
             },
         }
     }
@@ -219,22 +250,31 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
         sub_buffer = sub_buffer[samples_to_render..];
     }
 
-    for (buffer) |*frame| {
-        inline for (frame, 0..) |*sample, i| {
-            sample.* = self.dc_blockers[i].tick(sample.*);
-        }
-    }
+    // for (buffer) |*frame| {
+    //     inline for (frame, 0..) |*sample, i| {
+    //         sample.* = self.dc_blockers[i].tick(sample.*);
+    //     }
+    // }
 }
 
 pub fn allocateVoice(self: *Self) *Voice {
     var max_index: usize = 0;
     var max_time: u32 = 0;
+
     for (&self.voices, 0..) |*voice, i| {
-        if (max_time < voice.playing_time) {
+        if (voice.gate < 0.01) {
             max_index = i;
-            max_time = voice.playing_time;
+            break;
+        }
+    } else {
+        for (&self.voices, 0..) |*voice, i| {
+            if (max_time < voice.playing_time) {
+                max_index = i;
+                max_time = voice.playing_time;
+            }
         }
     }
+
     return &self.voices[max_index];
 }
 

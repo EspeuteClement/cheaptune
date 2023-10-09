@@ -48,49 +48,8 @@ fn midiInCallback(midi_in: c.HMIDIIN, msg: c_uint, instance: ?*anyopaque, param1
         //std.log.info("midi message : {b:0>8} : {b:0>16}", .{ @as(u8, @bitCast(data.status)), @as(u16, @bitCast(data.data)) });
 
         if (ev_or_null) |ev| {
-            switch (ev) {
-                .NoteOn => |d| {
-                    synth.playNote(d.note, d.velocity);
-                },
-                .NoteOff => |d| {
-                    synth.playNote(d.note, 0);
-                },
-                .ControlChange => |d| {
-                    if (d.controller_id == 0b111) {
-                        var freq: f32 = @floatFromInt(d.value);
-                        freq = freq / 127.0;
-                        const min: f32 = 20.0;
-                        const max: f32 = 24000.0;
-                        freq = min * std.math.exp(freq * @log(max / min));
-                        std.log.info("set freq to {d:8.2}", .{freq});
-                        synth.setFilter(freq);
-                    } else {
-                        std.log.info("unhandeld midi message : {any}", .{d});
-                    }
-                },
-                else => |d| {
-                    std.log.info("unhandeld midi message : {any}", .{d});
-                },
-            }
+            synth.midiIn(ev);
         }
-        // Note on
-        // if (data.status.voice_message.kind == 0b1001) {
-        //     var ev: NoteOnEvent = @bitCast(data.data);
-        //     synth.playNote(ev.note, ev.velocity);
-        // } else if (data.status.voice_message.kind == 0b1011) {
-        //     var ev: CCEvent = @bitCast(data.data);
-        //     if (ev.cc_id == 0b111) {
-        //         var freq: f32 = @floatFromInt(ev.value);
-        //         freq = freq / 127.0;
-        //         const min: f32 = 20.0;
-        //         const max: f32 = 24000.0;
-
-        //         freq = min * std.math.exp(freq * @log(max / min));
-
-        //         std.log.info("set freq to {d:8.2}", .{freq});
-        //         synth.setFilter(freq);
-        //     }
-        // }
     }
 }
 
@@ -228,6 +187,8 @@ pub fn main() anyerror!void {
             }
             prev = smp;
         }
+
+        start = 0;
 
         var reslice = readback_slice_copy[start..];
         if (reslice.len > 1) {

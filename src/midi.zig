@@ -14,11 +14,11 @@ pub const Event = struct {
         // Sysex events are skipped for the moment
         Meta: Meta,
 
-        const MidiEvent = struct {
+        pub const MidiEvent = struct {
             channel: u4,
             data: MidiEventData,
 
-            const MidiEventData = union(MidiEventKind) {
+            pub const MidiEventData = union(MidiEventKind) {
                 NoteOff: struct {
                     note: u7,
                     velocity: u7,
@@ -64,6 +64,12 @@ pub const Event = struct {
         };
     };
 };
+
+pub fn midiToLogRange(value: u7, min: f32, max: f32) f32 {
+    var val: f32 = @floatFromInt(value);
+    val /= @floatCast(std.math.maxInt(u7));
+    return min * @exp(val * @log(max / min));
+}
 
 const MidiEventKind = enum(u8) {
     NoteOff = 0b1000_0000,

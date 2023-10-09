@@ -1,6 +1,7 @@
 const std = @import("std");
 const Synth = @import("synth.zig");
 const Valp1 = @import("valp1.zig");
+const ADSR = @import("adsr.zig");
 
 const Self = @This();
 
@@ -11,21 +12,23 @@ const nyquist = Synth.nyquist;
 time: f64 = 0.0,
 time_lfo: f64 = 0.0,
 lfo_scale: f64 = 0.0001,
-lfo_speed: f64 = 5.0 / @as(f64, sampleRate),
+lfo_speed: f64 = 0.0,
 
 note: u8 = 9,
 cur_freq: f64 = 0.0,
 
 velocity: f32 = 0.0,
-cur_vel: f32 = 0.0,
+gate: f32 = 0.0,
 
 playing_time: u32 = 0.0,
 
 low_pass: [numChannels]Valp1 = [_]Valp1{Valp1.init(1000.0, sampleRate)} ** numChannels,
+adsr: ADSR = .{},
 
 pub fn playNote(self: *Self, note: u8, vel: f32) void {
     self.note = note;
     self.velocity = vel;
+    self.gate = 1.0;
     self.time_lfo = 0;
 
     const A = 440.0;
@@ -35,7 +38,7 @@ pub fn playNote(self: *Self, note: u8, vel: f32) void {
 }
 
 pub fn release(self: *Self) void {
-    self.velocity = 0.0;
+    self.gate = 0.0;
 }
 
 pub fn setFilter(self: *Self, freq: f32) void {
@@ -46,14 +49,18 @@ pub fn setFilter(self: *Self, freq: f32) void {
 
 pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
     _ = buffer;
-    var target_vel: f32 = self.velocity;
-    self.cur_vel = self.cur_vel + (target_vel - self.cur_vel) * 0.1;
-    if (@abs(self.cur_vel) < 0.001)
-        self.cur_vel = 0.0;
+    _ = self;
 }
 
 pub fn renderCommonEnd(self: *Self, buffer: [][numChannels]f32) void {
     self.playing_time +|= 1;
+
+    for (buffer) |*frame| {
+        var mult = self.adsr.tick(self.gate) * self.velocity;
+        inline for (frame) |*sample| {
+            sample.* *= mult;
+        }
+    }
 
     for (buffer) |*frame| {
         inline for (frame, &self.low_pass) |*sample, *filter| {
@@ -68,7 +75,6 @@ pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
 
     for (buffer) |*frame| {
         var s: f32 = if (@mod(self.time, 1.0) > 0.5) 1.0 else -1.0;
-        s *= self.cur_vel;
         inline for (frame) |*sample| {
             sample.* = s;
         }
@@ -82,7 +88,6 @@ pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
 
     for (buffer) |*frame| {
         var s: f32 = @floatCast(@sin(self.time * std.math.tau + @sin(self.time * std.math.tau * 2.0 + @sin(self.time * std.math.tau * 2.0))));
-        s *= self.cur_vel;
         inline for (frame) |*sample| {
             sample.* = s;
         }
@@ -110,7 +115,6 @@ pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
 
         s *= 4.0 / std.math.pi;
 
-        s *= self.cur_vel;
         inline for (frame) |*sample| {
             sample.* = s;
         }
@@ -144,14 +148,13 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
         v -= blep(inc, @floatCast(@mod(self.time + (1.0 - width), 1.0)));
 
         var s = v;
-        s *= self.cur_vel;
         inline for (frame) |*sample| {
             sample.* = s;
         }
         self.time += @floatCast(inc);
         self.time += @sin(self.time_lfo * std.math.tau) * self.lfo_scale;
 
-        self.time_lfo = std.math.mod(f64, self.time_lfo + self.lfo_speed, 1.0) catch unreachable;
+        self.time_lfo = std.math.mod(f64, self.time_lfo + self.lfo_speed * inc, 1.0) catch unreachable;
 
         self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
     }
