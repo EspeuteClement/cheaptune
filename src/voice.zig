@@ -88,7 +88,7 @@ pub fn renderConst(_: *Self, buffer: [][numChannels]f32) void {
 
     for (buffer) |*frame| {
         inline for (frame) |*sample| {
-            sample.* = 1.0;
+            sample.* = 0.01;
         }
     }
 }
@@ -108,8 +108,8 @@ pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
 }
 
 pub fn renderSineLUT(self: *Self, buffer: [][numChannels]f32) void {
-    //self.renderCommon(buffer);
-    //defer self.renderCommonEnd(buffer);
+    self.renderCommon(buffer);
+    defer self.renderCommonEnd(buffer);
 
     for (buffer) |*frame| {
         var s: f32 = sinLUT(@floatCast(self.time), 8);
