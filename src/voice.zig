@@ -34,7 +34,7 @@ pub fn playNote(self: *Self, note: u8, vel: f32) void {
     const A = 440.0;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
 
-    self.playing_time = 0;
+    //self.playing_time = 0;
 }
 
 pub fn release(self: *Self) void {
@@ -82,18 +82,65 @@ pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
     }
 }
 
+pub fn renderConst(_: *Self, buffer: [][numChannels]f32) void {
+    //self.renderCommon(buffer);
+    //defer self.renderCommonEnd(buffer);
+
+    for (buffer) |*frame| {
+        inline for (frame) |*sample| {
+            sample.* = 1.0;
+        }
+    }
+}
+
 pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
     self.renderCommon(buffer);
     defer self.renderCommonEnd(buffer);
 
     for (buffer) |*frame| {
-        var s: f32 = @floatCast(@sin(self.time * std.math.tau + @sin(self.time * std.math.tau * 2.0 + @sin(self.time * std.math.tau * 2.0))));
+        var s: f32 = @floatCast(@sin(self.time * std.math.tau));
         inline for (frame) |*sample| {
             sample.* = s;
         }
         self.time += 1.0 / @as(f64, sampleRate) * self.cur_freq;
         self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
     }
+}
+
+pub fn renderSineLUT(self: *Self, buffer: [][numChannels]f32) void {
+    //self.renderCommon(buffer);
+    //defer self.renderCommonEnd(buffer);
+
+    for (buffer) |*frame| {
+        var s: f32 = sinLUT(@floatCast(self.time), 8);
+        inline for (frame) |*sample| {
+            sample.* = s;
+        }
+        self.time += 1.0 / @as(f64, sampleRate) * self.cur_freq;
+        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+    }
+}
+
+inline fn sinLUT(time: f32, comptime tableSizePow: comptime_int) f32 {
+    const size = 1 << tableSizePow;
+    const LUT: [size]f32 = comptime brk: {
+        var LUT: [size]f32 = undefined;
+        for (&LUT, 0..) |*s, i| {
+            var t: f32 = @floatFromInt(i);
+            t *= std.math.tau;
+            t /= @floatFromInt(size);
+
+            s.* = @sin(t);
+        }
+        break :brk LUT;
+    };
+
+    var index: usize = @intFromFloat(time * size);
+    //var frac: f32 = time * size - @as(f32, @floatFromInt(index));
+    index &= size - 1;
+    var a = LUT[index];
+    //var b = LUT[(index + 1) & (size - 1)];
+    return a; //+ (b - a) * frac;
 }
 
 pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
@@ -111,6 +158,33 @@ pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
             const fharmonic: f32 = @floatFromInt(harmonic * 2 + 1);
 
             s += 1.0 / (fharmonic) * @sin(@as(f32, @floatCast(self.time * std.math.tau)) * fharmonic);
+        }
+
+        s *= 4.0 / std.math.pi;
+
+        inline for (frame) |*sample| {
+            sample.* = s;
+        }
+        self.time += 1.0 / @as(f32, sampleRate) * self.cur_freq;
+        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+    }
+}
+
+pub fn renderBandlimitedLUT(self: *Self, buffer: [][numChannels]f32) void {
+    self.renderCommon(buffer);
+    defer self.renderCommonEnd(buffer);
+
+    if (self.cur_freq == 0)
+        return;
+
+    for (buffer) |*frame| {
+        var neededHarmonics: usize = @intFromFloat(@floor(nyquist / self.cur_freq));
+        neededHarmonics = @min(neededHarmonics, 200);
+        var s: f32 = 0.0;
+        for (0..std.math.shr(usize, neededHarmonics, 1)) |harmonic| {
+            const fharmonic: f32 = @floatFromInt(harmonic * 2 + 1);
+
+            s += 1.0 / (fharmonic) * sinLUT(@floatCast(self.time * fharmonic), 9);
         }
 
         s *= 4.0 / std.math.pi;
@@ -164,5 +238,8 @@ pub const renderers = [_]struct { name: []const u8, cb: *const fn (*Self, [][2]f
     .{ .name = "PolyBlep", .cb = &renderBlep },
     .{ .name = "Naive", .cb = &renderNaive },
     .{ .name = "Sine", .cb = &renderSine },
+    .{ .name = "SineLUT", .cb = &renderSineLUT },
     .{ .name = "Band Limited", .cb = &renderBandlimited },
+    .{ .name = "Band Limited LUT", .cb = &renderBandlimitedLUT },
+    .{ .name = "Const", .cb = &renderConst },
 };

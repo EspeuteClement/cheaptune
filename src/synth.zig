@@ -258,15 +258,18 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
 }
 
 pub fn allocateVoice(self: *Self) *Voice {
-    var max_index: usize = 0;
+    var max_index: ?usize = null;
     var max_time: u32 = 0;
 
     for (&self.voices, 0..) |*voice, i| {
         if (voice.gate < 0.01) {
-            max_index = i;
-            break;
+            if (max_time < voice.playing_time) {
+                max_index = i;
+                max_time = voice.playing_time;
+            }
         }
-    } else {
+    }
+    if (max_index == null) {
         for (&self.voices, 0..) |*voice, i| {
             if (max_time < voice.playing_time) {
                 max_index = i;
@@ -275,7 +278,7 @@ pub fn allocateVoice(self: *Self) *Voice {
         }
     }
 
-    return &self.voices[max_index];
+    return &self.voices[max_index orelse 0];
 }
 
 const Self = @This();

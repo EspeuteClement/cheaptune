@@ -1,5 +1,6 @@
 const std = @import("std");
 const Synth = @import("synth.zig");
+const Voice = @import("voice.zig");
 
 pub fn main() !void {
     const numSamples = 10 * Synth.sampleRate;
@@ -11,10 +12,9 @@ pub fn main() !void {
     std.debug.print("[ Rendering {d} samples]\n------------\n", .{numSamples});
 
     {
-        for (Synth.renderers) |renderer| {
-            var synth = try Synth.init(allocator);
-            defer synth.deinit(allocator);
-            synth.playNote(42, 255);
+        for (Voice.renderers) |renderer| {
+            var voice = Voice{};
+            voice.playNote(42, 255);
 
             {
                 var time = try std.time.Timer.start();
@@ -27,7 +27,7 @@ pub fn main() !void {
                     std.debug.print("[{s: <15}] Took {d: >6.3} s (per sample : {d: >8.3} ns -> {d: >6.3} % -> {d: >4.0} max poly)\n", .{ renderer.name, end, per_sample * std.time.ns_per_s, per_sample_percent * 100.0, @as(u32, @intFromFloat(1.0 / per_sample_percent)) });
                 }
 
-                renderer.cb(&synth, buffer);
+                renderer.cb(&voice, buffer);
             }
         }
     }
