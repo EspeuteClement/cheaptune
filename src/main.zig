@@ -188,6 +188,10 @@ pub fn main() anyerror!void {
             }
         }
 
+        if (rl.isKeyPressed(rl.KeyboardKey.key_p)) {
+            try synth.commands.push(.{ .playMidi = .{ .midi = &midi } });
+        }
+
         var delta: isize = @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_subtract))) - @as(isize, @intFromBool(rl.isKeyPressed(rl.KeyboardKey.key_kp_add)));
         if (delta != 0) {
             currentSynth = @mod((currentSynth + delta), Voice.renderers.len);

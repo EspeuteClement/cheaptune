@@ -37,7 +37,7 @@ dc_blockers: [numChannels]DCBlocker = [_]DCBlocker{.{}} ** numChannels,
 midi: ?*Midi = null,
 midi_next_event: usize = 0,
 midi_time_accumulator: f32 = 0.0,
-midi_ticks_per_sample: f32 = 0.0,
+midi_samples_per_tick: f32 = 0.0,
 
 // ==================================================
 // ================ MAIN THREAD API =================
@@ -75,7 +75,7 @@ pub fn setRenderer(self: *Self, wanted: usize) void {
 pub fn startMidi(self: *Self, midi: *Midi) void {
     self.midi = midi;
     self.midi_time_accumulator = 0.0;
-    self.midi_ticks_per_sample = Midi.tempoToTicksPerSamples(500_000, midi.division, sampleRate);
+    self.midi_samples_per_tick = Midi.tempoToSamplesPerTick(0x06_1A_80, midi.division, sampleRate);
     self.midi_next_event = 0;
 
     if (self.midi) |m| {
@@ -89,7 +89,7 @@ pub fn startMidi(self: *Self, midi: *Midi) void {
                     .Meta => |meta| {
                         switch (meta) {
                             .SetTempo => |tempo| {
-                                self.midi_ticks_per_sample = Midi.tempoToTicksPerSamples(tempo, midi.division, sampleRate);
+                                self.midi_samples_per_tick = Midi.tempoToSamplesPerTick(tempo, midi.division, sampleRate);
                             },
                             else => {},
                         }
@@ -132,16 +132,16 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
 
     @memset(buffer, .{ 0.0, 0.0 });
 
-    var remaining_samples = buffer.len;
-    while (remaining_samples > 0) {
-        var samples_to_render = @min(remaining_samples, buffer.len);
+    var sub_buffer = buffer;
+    while (sub_buffer.len > 0) {
+        var samples_to_render = @min(sub_buffer.len, self.workBuffer.len);
         brk: {
             if (self.midi) |midi| {
                 var nextEvent: Midi.Event = midi.tracks[2][self.midi_next_event];
                 var delta: f32 = @floatFromInt(nextEvent.deltatime);
 
                 // Play events that are just happening right now
-                if (delta < self.midi_time_accumulator) {
+                if (delta <= self.midi_time_accumulator) {
                     self.midi_time_accumulator -= delta;
 
                     // small hack
@@ -194,11 +194,12 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                     }
                 }
 
-                var new_delta: f32 = @floatFromInt(nextEvent.deltatime);
-                var num_samples: usize = @intFromFloat(new_delta * self.midi_ticks_per_sample);
-                samples_to_render = @min(samples_to_render, num_samples);
+                var ticks_to_next_event: f32 = @as(f32, @floatFromInt(nextEvent.deltatime)) - self.midi_time_accumulator;
+                var samples_to_next_event: usize = @intFromFloat(ticks_to_next_event * self.midi_samples_per_tick);
+                samples_to_next_event = @max(1, samples_to_next_event);
+                samples_to_render = @min(samples_to_render, samples_to_next_event);
 
-                self.midi_time_accumulator += @as(f32, @floatFromInt(samples_to_render)) * self.midi_ticks_per_sample;
+                self.midi_time_accumulator += @as(f32, @floatFromInt(samples_to_render)) / self.midi_samples_per_tick;
             }
         }
 
@@ -209,14 +210,13 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             cb.cb(voice, work_slice);
 
             // Mix
-            for (buffer, work_slice) |*out, sample| {
+            for (sub_buffer[0..samples_to_render], work_slice) |*out, sample| {
                 inline for (out, sample) |*o, s| {
                     o.* += s;
                 }
             }
         }
-
-        remaining_samples -|= samples_to_render;
+        sub_buffer = sub_buffer[samples_to_render..];
     }
 
     for (buffer) |*frame| {

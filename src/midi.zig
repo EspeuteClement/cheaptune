@@ -270,13 +270,17 @@ pub fn parseMidiEvent(stream: *[]const u8, first_byte: u8, previous: ?MidiEventK
     };
 }
 
-pub fn tempoToTicksPerSamples(midi_tempo: u24, ticks_per_quarternote: u16, sample_rate: u32) f32 {
+pub fn tempoToSamplesPerTick(midi_tempo: u24, ticks_per_quarternote: u16, sample_rate: u32) f32 {
     var tempo: f32 = @floatFromInt(midi_tempo);
     var fsr: f32 = @floatFromInt(sample_rate);
     var fticks_per_quarternote: f32 = @floatFromInt(ticks_per_quarternote);
 
     var tick_len_s = (tempo / std.time.us_per_s) / fticks_per_quarternote;
     return tick_len_s * fsr;
+}
+
+test tempoToSamplesPerTick {
+    std.debug.print("\n\n{d}\n", .{tempoToSamplesPerTick(0x06_1A_80, 96, 48000)});
 }
 
 fn parseMetaMessage(stream: *[]const u8) !?Event.Data.Meta {
