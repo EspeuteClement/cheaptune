@@ -11,8 +11,8 @@ const nyquist = Synth.nyquist;
 
 time: f64 = 0.0,
 time_lfo: f64 = 0.0,
-lfo_scale: f64 = 0.0001,
-lfo_speed: f64 = 0.0,
+lfo_scale: f64 = 0.01,
+lfo_speed: f64 = 5.0 / @as(comptime_float, sampleRate),
 
 note: u8 = 9,
 cur_freq: f64 = 0.0,
@@ -226,9 +226,9 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
             sample.* = s;
         }
         self.time += @floatCast(inc);
-        self.time += @sin(self.time_lfo * std.math.tau) * self.lfo_scale;
+        self.time += @sin(self.time_lfo * std.math.tau) * self.lfo_scale * inc;
 
-        self.time_lfo = std.math.mod(f64, self.time_lfo + self.lfo_speed * inc, 1.0) catch unreachable;
+        self.time_lfo = std.math.mod(f64, self.time_lfo + self.lfo_speed, 1.0) catch unreachable;
 
         self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
     }

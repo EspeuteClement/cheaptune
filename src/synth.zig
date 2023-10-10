@@ -33,9 +33,11 @@ const Command = union(enum) {
 
 const Synth = @This();
 
+const num_voices_max = 8;
+
 commands: Fifo(Command),
 
-voices: [2]Voice = [_]Voice{.{}} ** 2,
+voices: [num_voices_max]Voice = [_]Voice{.{}} ** num_voices_max,
 workBuffer: [1024][numChannels]f32 = undefined,
 current_renderer: usize = 0,
 dc_blockers: [numChannels]DCBlocker = [_]DCBlocker{.{}} ** numChannels,
@@ -44,6 +46,8 @@ midi: ?*Midi = null,
 midi_next_event: usize = 0,
 midi_time_accumulator: f32 = 0.0,
 midi_samples_per_tick: f32 = 0.0,
+
+volume: f32 = 0.25,
 
 // ==================================================
 // ================ MAIN THREAD API =================
@@ -257,18 +261,18 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             // Mix
             for (sub_buffer[0..samples_to_render], work_slice) |*out, sample| {
                 inline for (out, sample) |*o, s| {
-                    o.* += s;
+                    o.* += s * self.volume;
                 }
             }
         }
         sub_buffer = sub_buffer[samples_to_render..];
     }
 
-    for (buffer) |*frame| {
-        inline for (frame, 0..) |*sample, i| {
-            sample.* = self.dc_blockers[i].tick(sample.*);
-        }
-    }
+    // for (buffer) |*frame| {
+    //     inline for (frame, 0..) |*sample, i| {
+    //         sample.* = self.dc_blockers[i].tick(sample.*);
+    //     }
+    // }
 }
 
 pub fn allocateVoice(self: *Self) *Voice {

@@ -286,6 +286,20 @@ pub fn main() anyerror!void {
             }
         }
 
+        if (record_head) |pos| {
+            const y = 16;
+
+            var buffer: [64]u8 = undefined;
+            var time: f32 = @floatFromInt(pos);
+            time /= @floatFromInt(Synth.sampleRate);
+            var max: f32 = @floatFromInt(record_buffer.len);
+            max /= @floatFromInt(Synth.sampleRate);
+            var text = std.fmt.bufPrintZ(buffer[0..], "• Recording : {d:0>5.2}/{d:0>5.2}", .{ time, max }) catch "err";
+
+            var size = rl.measureTextEx(font, text, 13, 0);
+            rl.drawTextEx(font, text, .{ .x = screenWidth - size.x - 16, .y = y }, 13, 0, rl.Color.red);
+        }
+
         if (rl.isKeyPressed(rl.KeyboardKey.key_r)) {
             if (record_head != null) {
                 stop_recording = true;
