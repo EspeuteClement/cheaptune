@@ -72,6 +72,31 @@ const midi_raw_data = @embedFile("tests/test_midi.mid");
 
 const keyboard_midi_start = 60;
 
+var font: rl.Font = undefined;
+
+var ui_clic: struct {
+    name: []const u8 = 0,
+} = .{};
+
+pub fn slider(name: []const u8, x: i32, y: i32, w: i32, h: i32, value: *f32, min: f32, max: f32) bool {
+    var t = (value.* - min) / (max - min);
+    var bar_h: i32 = @as(i32, @intFromFloat((1.0 - t) * @as(f32, @floatFromInt(h))));
+    rl.drawRectangle(x, y + bar_h, w, h - bar_h, rl.Color.light_gray);
+    rl.drawRectangleLines(x, y, w, h, rl.Color.black);
+
+    var s = rl.measureTextEx(font, @ptrCast(name), 13, 0);
+    rl.drawTextEx(font, @ptrCast(name), .{ .x = @as(f32, @floatFromInt(x + @divTrunc(w, 2))) - s.x / 2.0, .y = @floatFromInt(y + h) }, 13, 0, rl.Color.black);
+
+    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+        var mpos = rl.getMousePosition();
+        if (mpos.x > @as(f32, @floatFromInt(x)) and mpos.y > @as(f32, @floatFromInt(y)) and mpos.x < @as(f32, @floatFromInt(x + w)) and mpos.y < @as(f32, @floatFromInt(y + h))) {
+            std.log.info("CLICK", .{});
+        }
+    }
+
+    return false;
+}
+
 pub fn main() anyerror!void {
 
     // Initialization
@@ -138,7 +163,7 @@ pub fn main() anyerror!void {
         _ = c.midiInStart(phmi);
     }
 
-    const font = rl.loadFont("res/cozette.fnt");
+    font = rl.loadFont("res/cozette.fnt");
     defer rl.unloadFont(font);
 
     // Main game loop
@@ -151,7 +176,7 @@ pub fn main() anyerror!void {
         for (keyboard_map, 0..) |key, index| {
             var midi_key: u8 = @intCast(keyboard_midi_start + index);
             if (rl.isKeyPressed(key)) {
-                synth.playNote(midi_key, 255);
+                synth.playNote(midi_key, 127);
             } else if (rl.isKeyReleased(key)) {
                 synth.playNote(midi_key, 0);
             }
@@ -189,6 +214,9 @@ pub fn main() anyerror!void {
         }
 
         start = 0;
+
+        var v: f32 = 0.66;
+        _ = slider("test", 100, 10, 16, 50, &v, 0.0, 1.0);
 
         var reslice = readback_slice_copy[start..];
         if (reslice.len > 1) {

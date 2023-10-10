@@ -22,7 +22,7 @@ gate: f32 = 0.0,
 
 playing_time: u32 = 0.0,
 
-low_pass: [numChannels]Valp1 = [_]Valp1{Valp1.init(1000.0, sampleRate)} ** numChannels,
+low_pass: [numChannels]Valp1 = [_]Valp1{Valp1.init(22000.0, sampleRate)} ** numChannels,
 adsr: ADSR = .{},
 
 pub fn playNote(self: *Self, note: u8, vel: f32) void {
@@ -62,11 +62,11 @@ pub fn renderCommonEnd(self: *Self, buffer: [][numChannels]f32) void {
         }
     }
 
-    for (buffer) |*frame| {
-        inline for (frame, &self.low_pass) |*sample, *filter| {
-            sample.* = filter.tick(sample.*);
-        }
-    }
+    // for (buffer) |*frame| {
+    //     inline for (frame, &self.low_pass) |*sample, *filter| {
+    //         sample.* = filter.tick(sample.*);
+    //     }
+    // }
 }
 
 pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {

@@ -250,11 +250,11 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
         sub_buffer = sub_buffer[samples_to_render..];
     }
 
-    // for (buffer) |*frame| {
-    //     inline for (frame, 0..) |*sample, i| {
-    //         sample.* = self.dc_blockers[i].tick(sample.*);
-    //     }
-    // }
+    for (buffer) |*frame| {
+        inline for (frame, 0..) |*sample, i| {
+            sample.* = self.dc_blockers[i].tick(sample.*);
+        }
+    }
 }
 
 pub fn allocateVoice(self: *Self) *Voice {
