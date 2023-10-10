@@ -26,7 +26,7 @@ const RiffHeader = extern struct {
     }
 };
 
-fn init(len: u32) Self {
+pub fn init(len: u32) Self {
     return .{
         .hdr = .{
             .size = @sizeOf(RiffHeader) + len * 4 - 8,
@@ -35,14 +35,14 @@ fn init(len: u32) Self {
     };
 }
 
-fn writeHeader(self: *Self, writer: anytype) !void {
+pub fn writeHeader(self: *Self, writer: anytype) !void {
     try writer.writeStruct(self.hdr);
 }
 
-fn writeDataFloat(_: Self, buffer: [][2]f32, writer: anytype) !void {
+pub fn writeDataFloat(_: Self, buffer: [][2]f32, writer: anytype) !void {
     for (buffer) |frame| {
         inline for (frame) |sample| {
-            var convert: i16 = @intFromFloat(sample * std.math.maxInt(i16));
+            var convert: i16 = @intFromFloat(std.math.clamp(sample, -1.0, 1.0) * std.math.maxInt(i16));
             try writer.writeIntNative(i16, convert);
         }
     }
@@ -50,6 +50,7 @@ fn writeDataFloat(_: Self, buffer: [][2]f32, writer: anytype) !void {
 
 test {
     var file = try std.fs.cwd().createFile("test.wav", .{});
+    defer file.close();
     var wav_writter: Self = Self.init(48000 * 3);
 
     var file_writter = file.writer();

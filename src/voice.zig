@@ -34,7 +34,7 @@ pub fn playNote(self: *Self, note: u8, vel: f32) void {
     const A = 440.0;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
 
-    //self.playing_time = 0;
+    self.playing_time = 0;
 }
 
 pub fn release(self: *Self) void {

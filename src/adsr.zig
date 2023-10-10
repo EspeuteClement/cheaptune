@@ -8,6 +8,8 @@ sustain: f32 = 0.5,
 release: f32 = 0.2,
 
 timer: f32 = 0,
+
+sample_rate: u32 = Synth.sampleRate,
 attack_time: f32 = 0.1 * Synth.sampleRate,
 
 a: f32 = 0,
@@ -19,18 +21,25 @@ memory: f32 = 0,
 
 mode: Mode = .Clear,
 
+pub fn setSampleRate(self: *ADSR, sample_rate: u32) void {
+    self.sample_rate = sample_rate;
+    self.attack_time = 0.1 * @as(f32, @floatFromInt(sample_rate));
+}
+
+pub const parameters = [_][]const u8{ "attack", "decay", "sustain", "release" };
+
 pub fn tick(self: *ADSR, gate: f32) f32 {
     var out: f32 = 0.0;
 
     if (self.memory < gate and self.mode != .Decay) {
         self.mode = .Attack;
         self.timer = 0.0;
-        var pole = tau2pole(self.attack * 0.6);
+        var pole = self.tau2pole(self.attack * 0.6);
         self.a = pole;
         self.b = 1.0 - pole;
     } else if (self.memory > gate) {
         self.mode = .Release;
-        var pole = tau2pole(self.release);
+        var pole = self.tau2pole(self.release);
         self.a = pole;
         self.b = 1.0 - pole;
     }
@@ -47,7 +56,7 @@ pub fn tick(self: *ADSR, gate: f32) f32 {
             out = self.filter();
             if (out > 0.99) {
                 self.mode = .Decay;
-                var pole = tau2pole(self.decay);
+                var pole = self.tau2pole(self.decay);
                 self.a = pole;
                 self.b = 1.0 - pole;
             }
@@ -68,8 +77,8 @@ fn filter(self: *ADSR) f32 {
     return self.y;
 }
 
-pub fn tau2pole(tau: f32) f32 {
-    return @exp(-1.0 / (tau * Synth.sampleRate));
+inline fn tau2pole(self: *ADSR, tau: f32) f32 {
+    return @exp(-1.0 / (tau * @as(f32, @floatFromInt(self.sample_rate))));
 }
 
 const Mode = enum { Clear, Attack, Decay, Release };

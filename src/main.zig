@@ -5,6 +5,8 @@ const Synth = @import("synth.zig");
 const Voice = @import("voice.zig");
 const Fifo = @import("fifo.zig").Fifo;
 const Midi = @import("midi.zig");
+const ADSR = @import("ADSR.zig");
+const WavWritter = @import("wav_writter.zig");
 
 const c = @cImport({
     @cInclude("Windows.h");
@@ -75,11 +77,34 @@ const keyboard_midi_start = 60;
 var font: rl.Font = undefined;
 
 var ui_clic: struct {
-    name: []const u8 = 0,
+    name: ?[]const u8 = null,
 } = .{};
 
 pub fn slider(name: []const u8, x: i32, y: i32, w: i32, h: i32, value: *f32, min: f32, max: f32) bool {
     var t = (value.* - min) / (max - min);
+    var value_changed = false;
+
+    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
+        var mpos = rl.getMousePosition();
+        if (mpos.x > @as(f32, @floatFromInt(x)) and mpos.y > @as(f32, @floatFromInt(y)) and mpos.x < @as(f32, @floatFromInt(x + w)) and mpos.y < @as(f32, @floatFromInt(y + h))) {
+            ui_clic.name = name;
+        }
+    }
+
+    if (ui_clic.name != null and ui_clic.name.?.ptr == name.ptr and ui_clic.name.?.len == name.len) {
+        if (rl.isMouseButtonDown(rl.MouseButton.mouse_button_left)) {
+            var mpos = rl.getMousePosition();
+
+            var mt = (mpos.y - @as(f32, @floatFromInt(y))) / @as(f32, @floatFromInt(h));
+            mt = std.math.clamp(1.0 - mt, 0.0, 1.0);
+            mt = min + mt * (max - min);
+            value.* = mt;
+            value_changed = true;
+        } else {
+            ui_clic.name = null;
+        }
+    }
+
     var bar_h: i32 = @as(i32, @intFromFloat((1.0 - t) * @as(f32, @floatFromInt(h))));
     rl.drawRectangle(x, y + bar_h, w, h - bar_h, rl.Color.light_gray);
     rl.drawRectangleLines(x, y, w, h, rl.Color.black);
@@ -87,14 +112,13 @@ pub fn slider(name: []const u8, x: i32, y: i32, w: i32, h: i32, value: *f32, min
     var s = rl.measureTextEx(font, @ptrCast(name), 13, 0);
     rl.drawTextEx(font, @ptrCast(name), .{ .x = @as(f32, @floatFromInt(x + @divTrunc(w, 2))) - s.x / 2.0, .y = @floatFromInt(y + h) }, 13, 0, rl.Color.black);
 
-    if (rl.isMouseButtonPressed(rl.MouseButton.mouse_button_left)) {
-        var mpos = rl.getMousePosition();
-        if (mpos.x > @as(f32, @floatFromInt(x)) and mpos.y > @as(f32, @floatFromInt(y)) and mpos.x < @as(f32, @floatFromInt(x + w)) and mpos.y < @as(f32, @floatFromInt(y + h))) {
-            std.log.info("CLICK", .{});
-        }
-    }
+    var text_buff: [16]u8 = undefined;
+    var str: []const u8 = std.fmt.bufPrintZ(text_buff[0..], "{d: ^6.2}", .{value.*}) catch "err";
 
-    return false;
+    var s2 = rl.measureTextEx(font, @ptrCast(str), 13, 0);
+    rl.drawTextEx(font, @ptrCast(str), .{ .x = @as(f32, @floatFromInt(x + @divTrunc(w, 2))) - s2.x / 2.0, .y = @as(f32, @floatFromInt(y + h)) + s.y }, 13, 0, rl.Color.black);
+
+    return value_changed;
 }
 
 pub fn main() anyerror!void {
@@ -122,7 +146,7 @@ pub fn main() anyerror!void {
     synth = try Synth.init(alloc);
     defer synth.deinit(alloc);
 
-    try synth.commands.push(.{ .playMidi = .{ .midi = &midi } });
+    //try synth.commands.push(.{ .playMidi = .{ .midi = &midi } });
 
     var audioStream = rl.loadAudioStream(sampleRate, 32, numChannels);
     rl.setAudioStreamCallback(audioStream, audioCallback);
@@ -166,6 +190,13 @@ pub fn main() anyerror!void {
     font = rl.loadFont("res/cozette.fnt");
     defer rl.unloadFont(font);
 
+    var adsr: ADSR = .{};
+
+    // one min of recording max
+    var record_buffer = try alloc.alloc([2]f32, 48000 * 60);
+    defer alloc.free(record_buffer);
+    var record_head: ?usize = null;
+
     // Main game loop
     while (!rl.windowShouldClose()) { // Detect window close button or ESC key
         // Update
@@ -197,8 +228,87 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
+        inline for (ADSR.parameters, 0..) |field, i| {
+            const label: [2]u8 = comptime brk: {
+                const buff: [2]u8 = [_]u8{ field[0], 0 };
+                break :brk buff;
+            };
+            var modified = slider(label[0..], 100 + i * 28, 10, 16, 75, &@field(adsr, field), 0.001, 1.0);
+            if (modified) {
+                synth.commands.push(.{ .setADSR = .{ .value = @field(adsr, field), .index = i } }) catch {};
+            }
+        }
+
+        // Draw adsr
+
+        {
+            const start_x = 216;
+            const height = 75.0;
+            const start_y = 10 + @as(comptime_int, @intFromFloat(height));
+            const step_x = 1;
+            var prev_val: f32 = 0.0;
+            adsr.mode = .Clear;
+            adsr.memory = 0.0;
+            adsr.y = 0.0;
+            adsr.x = 0.0;
+            prev_val = adsr.tick(0.0);
+            const samples = 150;
+            adsr.setSampleRate(samples / 3);
+            for (0..samples) |i| {
+                var gate: f32 = if (i < samples / 2) 1.0 else 0.0;
+                var val = adsr.tick(gate);
+
+                rl.drawLine(
+                    @intCast(start_x + i * step_x),
+                    @intCast(start_y - @as(i32, @intFromFloat(height * prev_val))),
+                    @intCast(start_x + (i + 1) * step_x),
+                    @intCast(start_y - @as(i32, @intFromFloat(height * val))),
+                    rl.Color.black,
+                );
+
+                prev_val = val;
+            }
+        }
+
+        var stop_recording = false;
+
         const readback_slice_copy = readback_buffer_copy[0..1024];
-        while (readback_fifo.popBufferExact(readback_slice_copy)) {}
+        while (readback_fifo.popBufferExact(readback_slice_copy)) {
+            if (record_head) |record| {
+                if (record + 1024 > record_buffer.len) {
+                    stop_recording = true;
+                } else {
+                    for (readback_slice_copy, record_buffer[record..][0..1024]) |source, *target| {
+                        target.* = source;
+                    }
+                    record_head = record + 1024;
+                }
+            }
+        }
+
+        if (rl.isKeyPressed(rl.KeyboardKey.key_r)) {
+            if (record_head != null) {
+                stop_recording = true;
+            } else {
+                record_head = 0;
+            }
+        }
+
+        if (stop_recording) {
+            var file = try std.fs.cwd().createFile("record.wav", .{});
+            defer file.close();
+
+            std.log.info("got {d} s of samples", .{@as(f32, @floatFromInt(record_head.?)) / 48000.0});
+            var final_buffer = record_buffer[0..record_head.?];
+            var wav_writter: WavWritter = WavWritter.init(@intCast(final_buffer.len));
+
+            var file_writter = file.writer();
+            var buff = std.io.bufferedWriter(file_writter);
+            try wav_writter.writeHeader(file_writter);
+
+            try wav_writter.writeDataFloat(final_buffer, buff.writer());
+            record_head = null;
+        }
 
         const start_x: f32 = 0;
         var start_y: f32 = screenHeight / 2;
@@ -214,9 +324,6 @@ pub fn main() anyerror!void {
         }
 
         start = 0;
-
-        var v: f32 = 0.66;
-        _ = slider("test", 100, 10, 16, 50, &v, 0.0, 1.0);
 
         var reslice = readback_slice_copy[start..];
         if (reslice.len > 1) {

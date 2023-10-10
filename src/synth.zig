@@ -2,6 +2,7 @@ const std = @import("std");
 const Fifo = @import("fifo.zig").Fifo;
 const Voice = @import("voice.zig");
 const DCBlocker = @import("dcblocker.zig");
+const ADSR = @import("ADSR.zig");
 
 const Midi = @import("midi.zig");
 
@@ -17,6 +18,10 @@ const Command = union(enum) {
     setFilter: struct {
         freq: f32,
     },
+    setADSR: struct {
+        value: f32,
+        index: usize,
+    },
     setRenderer: struct {
         wanted: usize,
     },
@@ -30,7 +35,7 @@ const Synth = @This();
 
 commands: Fifo(Command),
 
-voices: [8]Voice = [_]Voice{.{}} ** 8,
+voices: [2]Voice = [_]Voice{.{}} ** 2,
 workBuffer: [1024][numChannels]f32 = undefined,
 current_renderer: usize = 0,
 dc_blockers: [numChannels]DCBlocker = [_]DCBlocker{.{}} ** numChannels,
@@ -117,6 +122,15 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                     for (&self.voices) |*voice| {
                         if (voice.note == cmd.note) {
                             voice.release();
+                        }
+                    }
+                }
+            },
+            .setADSR => |cmd| {
+                inline for (ADSR.parameters, 0..) |field, i| {
+                    if (cmd.index == i) {
+                        for (&self.voices) |*voice| {
+                            @field(voice.adsr, field) = cmd.value;
                         }
                     }
                 }
