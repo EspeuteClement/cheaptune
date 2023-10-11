@@ -36,6 +36,7 @@ const Synth = @This();
 const num_voices_max = 8;
 
 commands: Fifo(Command),
+base_instrument: Voice.Instrument = .{},
 
 voices: [num_voices_max]Voice = [_]Voice{.{}} ** num_voices_max,
 workBuffer: [1024][numChannels]f32 = undefined,
@@ -121,7 +122,7 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             .noteOn => |cmd| {
                 if (cmd.velocity > 0) {
                     var voice = self.allocateVoice();
-                    voice.playNote(cmd.note, @as(f32, @floatFromInt(cmd.velocity)) / 255.0);
+                    voice.playNote(cmd.note, @as(f32, @floatFromInt(cmd.velocity)) / 255.0, self.base_instrument);
                 } else {
                     for (&self.voices) |*voice| {
                         if (voice.note == cmd.note) {
@@ -131,11 +132,10 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                 }
             },
             .setADSR => |cmd| {
-                inline for (ADSR.parameters, 0..) |field, i| {
+                const fields = @typeInfo(ADSR.Parameters).Struct.fields;
+                inline for (fields, 0..) |field, i| {
                     if (cmd.index == i) {
-                        for (&self.voices) |*voice| {
-                            @field(voice.adsr, field) = cmd.value;
-                        }
+                        @field(self.base_instrument.adsr_params, field.name) = cmd.value;
                     }
                 }
             },
@@ -154,7 +154,7 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                 switch (ev) {
                     .NoteOn => |cmd| {
                         var voice = self.allocateVoice();
-                        voice.playNote(cmd.note, @as(f32, @floatFromInt(cmd.velocity)) / 255.0);
+                        voice.playNote(cmd.note, @as(f32, @floatFromInt(cmd.velocity)) / 255.0, self.base_instrument);
                     },
                     .NoteOff => |cmd| {
                         for (&self.voices) |*voice| {
@@ -202,7 +202,7 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                                     .NoteOn => |info| {
                                         if (info.velocity > 0) {
                                             var voice = self.allocateVoice();
-                                            voice.playNote(info.note, @as(f32, @floatFromInt(info.velocity)) / 255.0);
+                                            voice.playNote(info.note, @as(f32, @floatFromInt(info.velocity)) / 255.0, self.base_instrument);
                                         } else {
                                             for (&self.voices) |*voice| {
                                                 if (voice.note == info.note) {

@@ -190,7 +190,7 @@ pub fn main() anyerror!void {
     font = rl.loadFont("res/cozette.fnt");
     defer rl.unloadFont(font);
 
-    var adsr: ADSR = .{};
+    var adsr_params: ADSR.Parameters = .{};
 
     // one min of recording max
     var record_buffer = try alloc.alloc([2]f32, 48000 * 60);
@@ -228,14 +228,17 @@ pub fn main() anyerror!void {
         rl.beginDrawing();
         defer rl.endDrawing();
 
-        inline for (ADSR.parameters, 0..) |field, i| {
-            const label: [2]u8 = comptime brk: {
-                const buff: [2]u8 = [_]u8{ field[0], 0 };
-                break :brk buff;
-            };
-            var modified = slider(label[0..], 100 + i * 28, 10, 16, 75, &@field(adsr, field), 0.001, 1.0);
-            if (modified) {
-                synth.commands.push(.{ .setADSR = .{ .value = @field(adsr, field), .index = i } }) catch {};
+        {
+            const fields = @typeInfo(ADSR.Parameters).Struct.fields;
+            inline for (fields, 0..) |field, i| {
+                const label: [2]u8 = comptime brk: {
+                    const buff: [2]u8 = [_]u8{ field.name[0], 0 };
+                    break :brk buff;
+                };
+                var modified = slider(label[0..], 100 + i * 28, 10, 16, 75, &@field(adsr_params, field.name), 0.001, 1.0);
+                if (modified) {
+                    synth.commands.push(.{ .setADSR = .{ .value = @field(adsr_params, field.name), .index = i } }) catch {};
+                }
             }
         }
 
@@ -247,22 +250,20 @@ pub fn main() anyerror!void {
             const start_y = 10 + @as(comptime_int, @intFromFloat(height));
             const step_x = 1;
             var prev_val: f32 = 0.0;
-            adsr.mode = .Clear;
-            adsr.memory = 0.0;
-            adsr.y = 0.0;
-            adsr.x = 0.0;
-            prev_val = adsr.tick(0.0);
+
+            var adsr: ADSR = .{};
+
+            prev_val = adsr.tick(0.0, adsr_params);
             const samples = 150;
             adsr.setSampleRate(samples / 3);
             for (0..samples) |i| {
                 var gate: f32 = if (i < samples / 2) 1.0 else 0.0;
-                var val = adsr.tick(gate);
+                var val = adsr.tick(gate, adsr_params);
 
-                rl.drawLine(
-                    @intCast(start_x + i * step_x),
-                    @intCast(start_y - @as(i32, @intFromFloat(height * prev_val))),
-                    @intCast(start_x + (i + 1) * step_x),
-                    @intCast(start_y - @as(i32, @intFromFloat(height * val))),
+                rl.drawLineEx(
+                    .{ .x = @floatFromInt(start_x + i * step_x), .y = @floatFromInt(start_y - @as(i32, @intFromFloat(height * prev_val))) },
+                    .{ .x = @floatFromInt(start_x + (i + 1) * step_x), .y = @floatFromInt(start_y - @as(i32, @intFromFloat(height * val))) },
+                    1.0,
                     rl.Color.black,
                 );
 

@@ -9,10 +9,19 @@ const numChannels = Synth.numChannels;
 const sampleRate = Synth.sampleRate;
 const nyquist = Synth.nyquist;
 
+pub const Instrument = struct {
+    adsr_params: ADSR.Parameters = .{},
+    pulse_width: f32 = 0.5,
+};
+
+const default_instrument: Instrument = .{};
+
 time: f32 = 0.0,
 time_lfo: f32 = 0.0,
 lfo_scale: f32 = 0.01,
 lfo_speed: f32 = 5.0 / @as(comptime_float, sampleRate),
+
+current_instrument: Instrument = .{},
 
 note: u8 = 9,
 cur_freq: f32 = 0.0,
@@ -26,7 +35,9 @@ playing_time: u32 = 0.0,
 low_pass: [numChannels]Valp1 = [_]Valp1{Valp1.init(22000.0, sampleRate)} ** numChannels,
 adsr: ADSR = .{},
 
-pub fn playNote(self: *Self, note: u8, vel: f32) void {
+pub fn playNote(self: *Self, note: u8, vel: f32, instrument: Instrument) void {
+    self.current_instrument = instrument;
+
     self.note = note;
     self.velocity = vel;
     self.gate = 1.0;
@@ -57,8 +68,10 @@ pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
 pub fn renderCommonEnd(self: *Self, buffer: [][numChannels]f32) void {
     self.playing_time +|= 1;
 
+    const adsr_params = self.current_instrument.adsr_params;
+
     for (buffer) |*frame| {
-        var mult = self.adsr.tick(self.gate) * self.velocity;
+        var mult = self.adsr.tick(self.gate, adsr_params) * self.velocity;
         inline for (frame) |*sample| {
             sample.* *= mult;
         }
@@ -76,7 +89,7 @@ pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
     defer self.renderCommonEnd(buffer);
 
     for (buffer) |*frame| {
-        var s: f32 = if (self.time > 0.5) 1.0 else -1.0;
+        var s: f32 = if (self.time > self.current_instrument.pulse_width) 1.0 else -1.0;
         inline for (frame) |*sample| {
             sample.* = s;
         }
@@ -229,12 +242,12 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
     defer self.renderCommonEnd(buffer);
 
     const inc: f32 = self.cur_step;
+    const pw = self.current_instrument.pulse_width;
     for (buffer) |*frame| {
-        var width: f32 = 0.125;
-        var v: f32 = if (self.time < width) 1.0 else -1.0;
+        var v: f32 = if (self.time < pw) 1.0 else -1.0;
 
         v += blep(inc, @floatCast(self.time));
-        var tmp: f32 = @floatCast(self.time + (1.0 - width));
+        var tmp: f32 = @floatCast(self.time + (1.0 - pw));
         if (tmp >= 1.0)
             tmp -= 1.0;
         v -= blep(inc, tmp);

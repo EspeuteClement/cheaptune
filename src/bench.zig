@@ -19,7 +19,7 @@ pub fn main() !void {
             @memset(buffer, .{ 0, 0 });
 
             var voice = Voice{};
-            voice.playNote(42 + 12, 0.5);
+            voice.playNote(42 + 12, 0.5, .{});
             var buff = buffer;
 
             {
