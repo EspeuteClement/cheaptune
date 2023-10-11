@@ -3,6 +3,7 @@ const Fifo = @import("fifo.zig").Fifo;
 const Voice = @import("voice.zig");
 const DCBlocker = @import("dcblocker.zig");
 const ADSR = @import("ADSR.zig");
+const Vardelay = @import("vardelay.zig");
 
 const Midi = @import("midi.zig");
 
@@ -42,6 +43,8 @@ voices: [num_voices_max]Voice = [_]Voice{.{}} ** num_voices_max,
 workBuffer: [1024][numChannels]f32 = undefined,
 current_renderer: usize = 0,
 dc_blockers: [numChannels]DCBlocker = [_]DCBlocker{.{}} ** numChannels,
+vardelay: Vardelay = undefined,
+vardelay_buffer: [][2]f32 = undefined,
 
 midi: ?*Midi = null,
 midi_next_event: usize = 0,
@@ -55,15 +58,22 @@ volume: f32 = 0.25,
 // ==================================================
 
 pub fn init(allocator: std.mem.Allocator) !Synth {
-    var synth = Synth{
+    var self = Synth{
         .commands = Fifo(Command).init(try allocator.alloc(Command, 128)),
     };
+    errdefer allocator.free(self.commands.items);
 
-    return synth;
+    self.vardelay_buffer = try allocator.alloc([2]f32, 4 * sampleRate);
+    errdefer allocator.free(self.vardelay_buffer);
+
+    self.vardelay = try Vardelay.init(self.vardelay_buffer, sampleRate);
+
+    return self;
 }
 
 pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
     allocator.free(self.commands.items);
+    allocator.free(self.vardelay_buffer);
 }
 
 pub fn playNote(self: *Self, wanted_note: u8, velocity: u8) void {
@@ -265,6 +275,18 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                 }
             }
         }
+
+        for (sub_buffer[0..samples_to_render]) |*out| {
+            var del = out.*;
+            for (&del) |*d| {
+                d.* *= 0.5;
+            }
+            del = self.vardelay.tick(del, .{});
+            for (del, out) |d, *s| {
+                s.* += d;
+            }
+        }
+
         sub_buffer = sub_buffer[samples_to_render..];
     }
 
