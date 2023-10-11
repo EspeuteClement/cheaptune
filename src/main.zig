@@ -318,7 +318,7 @@ pub fn main() anyerror!void {
 
             var file_writter = file.writer();
             var buff = std.io.bufferedWriter(file_writter);
-            try wav_writter.writeHeader(file_writter);
+            try wav_writter.writeHeader(buff.writer());
 
             try wav_writter.writeDataFloat(final_buffer, buff.writer());
             record_head = null;
