@@ -9,13 +9,14 @@ const numChannels = Synth.numChannels;
 const sampleRate = Synth.sampleRate;
 const nyquist = Synth.nyquist;
 
-time: f64 = 0.0,
-time_lfo: f64 = 0.0,
-lfo_scale: f64 = 0.01,
-lfo_speed: f64 = 5.0 / @as(comptime_float, sampleRate),
+time: f32 = 0.0,
+time_lfo: f32 = 0.0,
+lfo_scale: f32 = 0.01,
+lfo_speed: f32 = 5.0 / @as(comptime_float, sampleRate),
 
 note: u8 = 9,
-cur_freq: f64 = 0.0,
+cur_freq: f32 = 0.0,
+cur_step: f32 = 0.0,
 
 velocity: f32 = 0.0,
 gate: f32 = 0.0,
@@ -33,6 +34,7 @@ pub fn playNote(self: *Self, note: u8, vel: f32) void {
 
     const A = 440.0;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
+    self.cur_step = std.math.clamp(1.0 / @as(f32, sampleRate) * self.cur_freq, 0.0, 0.5);
 
     self.playing_time = 0;
 }
@@ -74,11 +76,12 @@ pub fn renderNaive(self: *Self, buffer: [][numChannels]f32) void {
     defer self.renderCommonEnd(buffer);
 
     for (buffer) |*frame| {
-        var s: f32 = if (@mod(self.time, 1.0) > 0.5) 1.0 else -1.0;
+        var s: f32 = if (self.time > 0.5) 1.0 else -1.0;
         inline for (frame) |*sample| {
             sample.* = s;
         }
-        self.time += 1.0 / @as(f32, sampleRate) * self.cur_freq;
+
+        self.tickTime();
     }
 }
 
@@ -93,6 +96,18 @@ pub fn renderConst(_: *Self, buffer: [][numChannels]f32) void {
     }
 }
 
+inline fn tickTime(self: *Self) void {
+    self.time += self.cur_step;
+    self.time += sinLUT(self.time_lfo, 8) * self.lfo_scale * self.cur_step;
+
+    self.time_lfo += self.lfo_speed;
+    if (self.time_lfo >= 1.0)
+        self.time_lfo -= 1.0;
+
+    if (self.time >= 1.0)
+        self.time -= 1.0;
+}
+
 pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
     self.renderCommon(buffer);
     defer self.renderCommonEnd(buffer);
@@ -102,8 +117,8 @@ pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {
         inline for (frame) |*sample| {
             sample.* = s;
         }
-        self.time += 1.0 / @as(f64, sampleRate) * self.cur_freq;
-        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+        self.time += 1.0 / @as(f32, sampleRate) * self.cur_freq;
+        self.time = std.math.mod(f32, self.time, 1.0) catch unreachable;
     }
 }
 
@@ -116,8 +131,8 @@ pub fn renderSineLUT(self: *Self, buffer: [][numChannels]f32) void {
         inline for (frame) |*sample| {
             sample.* = s;
         }
-        self.time += 1.0 / @as(f64, sampleRate) * self.cur_freq;
-        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+
+        self.tickTime();
     }
 }
 
@@ -166,7 +181,7 @@ pub fn renderBandlimited(self: *Self, buffer: [][numChannels]f32) void {
             sample.* = s;
         }
         self.time += 1.0 / @as(f32, sampleRate) * self.cur_freq;
-        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+        self.time = std.math.mod(f32, self.time, 1.0) catch unreachable;
     }
 }
 
@@ -184,7 +199,7 @@ pub fn renderBandlimitedLUT(self: *Self, buffer: [][numChannels]f32) void {
         for (0..std.math.shr(usize, neededHarmonics, 1)) |harmonic| {
             const fharmonic: f32 = @floatFromInt(harmonic * 2 + 1);
 
-            s += 1.0 / (fharmonic) * sinLUT(@floatCast(self.time * fharmonic), 9);
+            s += 1.0 / (fharmonic) * sinLUT(@floatCast(self.time * fharmonic), 8);
         }
 
         s *= 4.0 / std.math.pi;
@@ -193,7 +208,7 @@ pub fn renderBandlimitedLUT(self: *Self, buffer: [][numChannels]f32) void {
             sample.* = s;
         }
         self.time += 1.0 / @as(f32, sampleRate) * self.cur_freq;
-        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+        self.time = std.math.mod(f32, self.time, 1.0) catch unreachable;
     }
 }
 
@@ -213,24 +228,23 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
     self.renderCommon(buffer);
     defer self.renderCommonEnd(buffer);
 
-    const inc: f32 = 1.0 / @as(f32, sampleRate) * @as(f32, @floatCast(self.cur_freq));
+    const inc: f32 = self.cur_step;
     for (buffer) |*frame| {
         var width: f32 = 0.125;
         var v: f32 = if (self.time < width) 1.0 else -1.0;
 
         v += blep(inc, @floatCast(self.time));
-        v -= blep(inc, @floatCast(@mod(self.time + (1.0 - width), 1.0)));
+        var tmp: f32 = @floatCast(self.time + (1.0 - width));
+        if (tmp >= 1.0)
+            tmp -= 1.0;
+        v -= blep(inc, tmp);
 
         var s = v;
         inline for (frame) |*sample| {
             sample.* = s;
         }
-        self.time += @floatCast(inc);
-        self.time += @sin(self.time_lfo * std.math.tau) * self.lfo_scale * inc;
 
-        self.time_lfo = std.math.mod(f64, self.time_lfo + self.lfo_speed, 1.0) catch unreachable;
-
-        self.time = std.math.mod(f64, self.time, 1.0) catch unreachable;
+        self.tickTime();
     }
 }
 

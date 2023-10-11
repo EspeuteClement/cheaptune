@@ -4,7 +4,7 @@ const Voice = @import("voice.zig");
 const WavWritter = @import("wav_writter.zig");
 
 pub fn main() !void {
-    const numSamples = 10 * Synth.sampleRate;
+    const numSamples = 30 * Synth.sampleRate;
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     var allocator = gpa.allocator();

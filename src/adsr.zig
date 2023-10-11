@@ -28,7 +28,7 @@ pub fn setSampleRate(self: *ADSR, sample_rate: u32) void {
 
 pub const parameters = [_][]const u8{ "attack", "decay", "sustain", "release" };
 
-pub fn tick(self: *ADSR, gate: f32) f32 {
+pub inline fn tick(self: *ADSR, gate: f32) f32 {
     var out: f32 = 0.0;
 
     if (self.memory < gate and self.mode != .Decay) {
