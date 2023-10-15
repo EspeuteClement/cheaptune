@@ -43,7 +43,7 @@ pub fn playNote(self: *Self, note: u8, vel: f32, instrument: Instrument) void {
     self.gate = 1.0;
     self.time_lfo = 0;
 
-    const A = 440.0;
+    const A = 439.459830624857;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
     self.cur_step = std.math.clamp(1.0 / @as(f32, sampleRate) * self.cur_freq, 0.0, 0.5);
 
@@ -119,6 +119,13 @@ inline fn tickTime(self: *Self) void {
 
     if (self.time >= 1.0)
         self.time -= 1.0;
+}
+
+pub fn renderTrace(self: *Self, buffer: [][numChannels]f32) void {
+    for (buffer) |_| {
+        std.debug.print("{d}\n", .{self.time});
+        self.tickTime();
+    }
 }
 
 pub fn renderSine(self: *Self, buffer: [][numChannels]f32) void {

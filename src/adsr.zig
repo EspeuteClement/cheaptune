@@ -7,6 +7,8 @@ pub const Parameters = struct {
     decay: f32 = 0.2,
     sustain: f32 = 0.5,
     release: f32 = 0.2,
+
+    volume: f32 = 0.5,
 };
 
 timer: f32 = 0,

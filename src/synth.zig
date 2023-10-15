@@ -264,6 +264,8 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
 
         var work_slice = self.workBuffer[0..samples_to_render];
 
+        var vol_scale = std.math.pow(f32, self.base_instrument.adsr_params.volume, 3.0);
+
         const cb = Voice.renderers[self.current_renderer];
         for (&self.voices) |*voice| {
             cb.cb(voice, work_slice);
@@ -271,7 +273,7 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             // Mix
             for (sub_buffer[0..samples_to_render], work_slice) |*out, sample| {
                 inline for (out, sample) |*o, s| {
-                    o.* += s * self.volume;
+                    o.* += s * vol_scale;
                 }
             }
         }
