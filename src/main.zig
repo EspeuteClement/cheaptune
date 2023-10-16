@@ -245,7 +245,7 @@ pub fn main() anyerror!void {
         // Draw adsr
 
         {
-            const start_x = 216;
+            const start_x = 236;
             const height = 75.0;
             const start_y = 10 + @as(comptime_int, @intFromFloat(height));
             const step_x = 1;

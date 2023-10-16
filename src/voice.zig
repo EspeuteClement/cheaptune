@@ -12,6 +12,7 @@ const nyquist = Synth.nyquist;
 pub const Instrument = struct {
     adsr_params: ADSR.Parameters = .{},
     pulse_width: f32 = 0.5,
+    mult: f32 = 1.0,
 };
 
 const default_instrument: Instrument = .{};
@@ -46,7 +47,6 @@ pub fn playNote(self: *Self, note: u8, vel: f32, instrument: Instrument) void {
 
     const A = 440.0;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
-    self.cur_step = std.math.clamp(1.0 / @as(f32, sampleRate) * self.cur_freq, 0.0, 0.5);
 
     self.playing_time = 0;
 }
@@ -63,7 +63,8 @@ pub fn setFilter(self: *Self, freq: f32) void {
 
 pub fn renderCommon(self: *Self, buffer: [][numChannels]f32) void {
     _ = buffer;
-    _ = self;
+
+    self.cur_step = std.math.clamp(1.0 / @as(f32, sampleRate) * self.cur_freq * self.current_instrument.mult, 0.0, 0.5);
 }
 
 pub fn renderCommonEnd(self: *Self, buffer: [][numChannels]f32) void {

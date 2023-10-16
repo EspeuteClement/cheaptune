@@ -53,6 +53,8 @@ midi_samples_per_tick: f32 = 0.0,
 
 last_render_num_samples: usize = 0,
 
+global_sequencer_accumulator: f32 = 0.0,
+
 volume: f32 = 0.25,
 
 // ==================================================
@@ -288,33 +290,34 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             }
         }
 
-        for (sub_buffer[0..samples_to_render]) |*out| {
-            var del = out.*;
-            for (&del) |*d| {
-                d.* *= 0.5;
-            }
-            del = self.vardelay.tick(del, .{});
-            for (del, out) |d, *s| {
-                s.* += d;
-            }
-        }
+        // for (sub_buffer[0..samples_to_render]) |*out| {
+        //     var del = out.*;
+        //     for (&del) |*d| {
+        //         d.* *= 0.5;
+        //     }
+        //     del = self.vardelay.tick(del, .{});
+        //     for (del, out) |d, *s| {
+        //         s.* += d;
+        //     }
+        // }
 
         sub_buffer = sub_buffer[samples_to_render..];
     }
 
-    // for (buffer) |*frame| {
-    //     inline for (frame, 0..) |*sample, i| {
-    //         sample.* = self.dc_blockers[i].tick(sample.*);
-    //     }
-    // }
+    for (buffer) |*frame| {
+        inline for (frame, 0..) |*sample, i| {
+            sample.* = self.dc_blockers[i].tick(sample.*);
+        }
+    }
 }
 
 fn processEvents(self: *Self, samples_since_last_call: usize) usize {
     var midi_samples: usize = std.math.maxInt(usize);
+    const fsamples_since_last_call: f32 = @floatFromInt(samples_since_last_call);
 
     brk: {
         if (self.midi) |midi| {
-            self.midi_time_accumulator += @as(f32, @floatFromInt(samples_since_last_call)) / self.midi_samples_per_tick;
+            self.midi_time_accumulator += fsamples_since_last_call / self.midi_samples_per_tick;
 
             var nextEvent: Midi.Event = midi.tracks[2][self.midi_next_event];
             var delta: f32 = @floatFromInt(nextEvent.deltatime);
@@ -374,12 +377,28 @@ fn processEvents(self: *Self, samples_since_last_call: usize) usize {
             }
 
             var ticks_to_next_event: f32 = @as(f32, @floatFromInt(nextEvent.deltatime)) - self.midi_time_accumulator;
-            var samples_to_next_event: usize = @intFromFloat(ticks_to_next_event * self.midi_samples_per_tick);
+            var samples_to_next_event: usize = @intFromFloat(@ceil(ticks_to_next_event * self.midi_samples_per_tick));
             midi_samples = samples_to_next_event;
         }
     }
 
-    return midi_samples;
+    var global_sequencer_samples: usize = std.math.maxInt(usize);
+    {
+        const event_period: f32 = 0.05; // s
+        self.global_sequencer_accumulator += fsamples_since_last_call * 1.0 / sampleRate;
+
+        if (self.global_sequencer_accumulator >= event_period) {
+            self.global_sequencer_accumulator -= event_period;
+            for (&self.voices) |*voice| {
+                voice.current_instrument.pulse_width = if (voice.current_instrument.pulse_width < 0.33) 0.5 else 0.25;
+                voice.current_instrument.mult = if (voice.current_instrument.mult > 1.0) 1.0 else 2.0;
+            }
+        }
+
+        global_sequencer_samples = @intFromFloat(@ceil(event_period - self.global_sequencer_accumulator));
+    }
+
+    return @min(global_sequencer_samples, midi_samples);
 }
 
 pub fn allocateVoice(self: *Self) *Voice {
