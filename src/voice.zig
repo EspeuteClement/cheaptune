@@ -26,6 +26,7 @@ current_instrument: Instrument = .{},
 note: u8 = 9,
 cur_freq: f32 = 0.0,
 cur_step: f32 = 0.0,
+cur_pulse_width: f32 = 0.5,
 
 velocity: f32 = 0.0,
 gate: f32 = 0.0,
@@ -43,7 +44,7 @@ pub fn playNote(self: *Self, note: u8, vel: f32, instrument: Instrument) void {
     self.gate = 1.0;
     self.time_lfo = 0;
 
-    const A = 439.459830624857;
+    const A = 440.0;
     self.cur_freq = (A / 32.0) * std.math.pow(f32, 2.0, @as(f32, @floatFromInt((self.note) - 9)) / 12.0);
     self.cur_step = std.math.clamp(1.0 / @as(f32, sampleRate) * self.cur_freq, 0.0, 0.5);
 
@@ -117,8 +118,10 @@ inline fn tickTime(self: *Self) void {
     if (self.time_lfo >= 1.0)
         self.time_lfo -= 1.0;
 
-    if (self.time >= 1.0)
+    if (self.time >= 1.0) {
         self.time -= 1.0;
+        self.cur_pulse_width = self.current_instrument.pulse_width;
+    }
 }
 
 pub fn renderTrace(self: *Self, buffer: [][numChannels]f32) void {
@@ -249,12 +252,11 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
     defer self.renderCommonEnd(buffer);
 
     const inc: f32 = self.cur_step;
-    const pw = self.current_instrument.pulse_width;
     for (buffer) |*frame| {
-        var v: f32 = if (self.time < pw) 1.0 else -1.0;
+        var v: f32 = if (self.time < self.cur_pulse_width) 1.0 else -1.0;
 
         v += blep(inc, @floatCast(self.time));
-        var tmp: f32 = @floatCast(self.time + (1.0 - pw));
+        var tmp: f32 = @floatCast(self.time + (1.0 - self.cur_pulse_width));
         if (tmp >= 1.0)
             tmp -= 1.0;
         v -= blep(inc, tmp);
