@@ -51,6 +51,8 @@ midi_next_event: usize = 0,
 midi_time_accumulator: f32 = 0.0,
 midi_samples_per_tick: f32 = 0.0,
 
+last_render_num_samples: usize = 0,
+
 volume: f32 = 0.25,
 
 // ==================================================
@@ -194,73 +196,81 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
     var sub_buffer = buffer;
     while (sub_buffer.len > 0) {
         var samples_to_render = @min(sub_buffer.len, self.workBuffer.len);
-        brk: {
-            if (self.midi) |midi| {
-                var nextEvent: Midi.Event = midi.tracks[2][self.midi_next_event];
-                var delta: f32 = @floatFromInt(nextEvent.deltatime);
+        // brk: {
+        //     if (self.midi) |midi| {
+        //         var nextEvent: Midi.Event = midi.tracks[2][self.midi_next_event];
+        //         var delta: f32 = @floatFromInt(nextEvent.deltatime);
 
-                // Play events that are just happening right now
-                if (delta <= self.midi_time_accumulator) {
-                    self.midi_time_accumulator -= delta;
+        //         // Play events that are just happening right now
+        //         if (delta <= self.midi_time_accumulator) {
+        //             self.midi_time_accumulator -= delta;
 
-                    // small hack
-                    nextEvent.deltatime = 0;
-                    while (nextEvent.deltatime == 0) {
-                        switch (nextEvent.data) {
-                            .MidiEvent => |ev| {
-                                switch (ev.data) {
-                                    .NoteOn => |info| {
-                                        if (info.velocity > 0) {
-                                            var voice = self.allocateVoice();
-                                            voice.playNote(info.note, @as(f32, @floatFromInt(info.velocity)) / 255.0, self.base_instrument);
-                                        } else {
-                                            for (&self.voices) |*voice| {
-                                                if (voice.note == info.note) {
-                                                    voice.release();
-                                                }
-                                            }
-                                        }
-                                    },
-                                    .NoteOff => |info| {
-                                        for (&self.voices) |*voice| {
-                                            if (voice.note == info.note) {
-                                                voice.release();
-                                            }
-                                        }
-                                    },
-                                    else => {},
-                                }
-                            },
-                            .Meta => |meta| {
-                                switch (meta) {
-                                    .EndOfTrack => {
-                                        self.midi = null;
-                                        for (&self.voices) |*voice| {
-                                            voice.release();
-                                        }
-                                        break :brk;
-                                    },
-                                    else => {},
-                                }
-                            },
-                        }
+        //             // small hack
+        //             nextEvent.deltatime = 0;
+        //             while (nextEvent.deltatime == 0) {
+        //                 switch (nextEvent.data) {
+        //                     .MidiEvent => |ev| {
+        //                         switch (ev.data) {
+        //                             .NoteOn => |info| {
+        //                                 if (info.velocity > 0) {
+        //                                     var voice = self.allocateVoice();
+        //                                     voice.playNote(info.note, @as(f32, @floatFromInt(info.velocity)) / 255.0, self.base_instrument);
+        //                                 } else {
+        //                                     for (&self.voices) |*voice| {
+        //                                         if (voice.note == info.note) {
+        //                                             voice.release();
+        //                                         }
+        //                                     }
+        //                                 }
+        //                             },
+        //                             .NoteOff => |info| {
+        //                                 for (&self.voices) |*voice| {
+        //                                     if (voice.note == info.note) {
+        //                                         voice.release();
+        //                                     }
+        //                                 }
+        //                             },
+        //                             else => {},
+        //                         }
+        //                     },
+        //                     .Meta => |meta| {
+        //                         switch (meta) {
+        //                             .EndOfTrack => {
+        //                                 self.midi = null;
+        //                                 for (&self.voices) |*voice| {
+        //                                     voice.release();
+        //                                 }
+        //                                 break :brk;
+        //                             },
+        //                             else => {},
+        //                         }
+        //                     },
+        //                 }
 
-                        self.midi_next_event += 1;
-                        if (self.midi_next_event >= midi.tracks[2].len) {
-                            break :brk;
-                        }
-                        nextEvent = midi.tracks[2][self.midi_next_event];
-                    }
-                }
+        //                 self.midi_next_event += 1;
+        //                 if (self.midi_next_event >= midi.tracks[2].len) {
+        //                     break :brk;
+        //                 }
+        //                 nextEvent = midi.tracks[2][self.midi_next_event];
+        //             }
+        //         }
 
-                var ticks_to_next_event: f32 = @as(f32, @floatFromInt(nextEvent.deltatime)) - self.midi_time_accumulator;
-                var samples_to_next_event: usize = @intFromFloat(ticks_to_next_event * self.midi_samples_per_tick);
-                samples_to_next_event = @max(1, samples_to_next_event);
-                samples_to_render = @min(samples_to_render, samples_to_next_event);
+        //         var ticks_to_next_event: f32 = @as(f32, @floatFromInt(nextEvent.deltatime)) - self.midi_time_accumulator;
+        //         var samples_to_next_event: usize = @intFromFloat(ticks_to_next_event * self.midi_samples_per_tick);
+        //         samples_to_next_event = @max(1, samples_to_next_event);
+        //         samples_to_render = @min(samples_to_render, samples_to_next_event);
 
-                self.midi_time_accumulator += @as(f32, @floatFromInt(samples_to_render)) / self.midi_samples_per_tick;
-            }
-        }
+        //         self.midi_time_accumulator += @as(f32, @floatFromInt(samples_to_render)) / self.midi_samples_per_tick;
+        //     }
+        // }
+
+        var sample_till_next_event = self.processEvents(self.last_render_num_samples);
+        samples_to_render = @min(samples_to_render, sample_till_next_event);
+        // Avoid death loop
+        if (samples_to_render == 0)
+            samples_to_render = 1;
+
+        self.last_render_num_samples = samples_to_render;
 
         var work_slice = self.workBuffer[0..samples_to_render];
 
@@ -297,6 +307,79 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
     //         sample.* = self.dc_blockers[i].tick(sample.*);
     //     }
     // }
+}
+
+fn processEvents(self: *Self, samples_since_last_call: usize) usize {
+    var midi_samples: usize = std.math.maxInt(usize);
+
+    brk: {
+        if (self.midi) |midi| {
+            self.midi_time_accumulator += @as(f32, @floatFromInt(samples_since_last_call)) / self.midi_samples_per_tick;
+
+            var nextEvent: Midi.Event = midi.tracks[2][self.midi_next_event];
+            var delta: f32 = @floatFromInt(nextEvent.deltatime);
+
+            // Play events that are just happening right now
+            if (delta <= self.midi_time_accumulator) {
+                self.midi_time_accumulator -= delta;
+
+                // small hack
+                nextEvent.deltatime = 0;
+                while (nextEvent.deltatime == 0) {
+                    switch (nextEvent.data) {
+                        .MidiEvent => |ev| {
+                            switch (ev.data) {
+                                .NoteOn => |info| {
+                                    if (info.velocity > 0) {
+                                        var voice = self.allocateVoice();
+                                        voice.playNote(info.note, @as(f32, @floatFromInt(info.velocity)) / 255.0, self.base_instrument);
+                                    } else {
+                                        for (&self.voices) |*voice| {
+                                            if (voice.note == info.note) {
+                                                voice.release();
+                                            }
+                                        }
+                                    }
+                                },
+                                .NoteOff => |info| {
+                                    for (&self.voices) |*voice| {
+                                        if (voice.note == info.note) {
+                                            voice.release();
+                                        }
+                                    }
+                                },
+                                else => {},
+                            }
+                        },
+                        .Meta => |meta| {
+                            switch (meta) {
+                                .EndOfTrack => {
+                                    self.midi = null;
+                                    for (&self.voices) |*voice| {
+                                        voice.release();
+                                    }
+                                    break :brk;
+                                },
+                                else => {},
+                            }
+                        },
+                    }
+
+                    self.midi_next_event += 1;
+                    if (self.midi_next_event >= midi.tracks[2].len) {
+                        break :brk;
+                    }
+                    nextEvent = midi.tracks[2][self.midi_next_event];
+                }
+            }
+
+            var ticks_to_next_event: f32 = @as(f32, @floatFromInt(nextEvent.deltatime)) - self.midi_time_accumulator;
+            var samples_to_next_event: usize = @intFromFloat(ticks_to_next_event * self.midi_samples_per_tick);
+            midi_samples = samples_to_next_event;
+        }
+    }
+
+    return midi_samples;
 }
 
 pub fn allocateVoice(self: *Self) *Voice {
