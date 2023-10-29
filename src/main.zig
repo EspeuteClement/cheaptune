@@ -5,7 +5,7 @@ const Synth = @import("synth.zig");
 const Voice = @import("voice.zig");
 const Fifo = @import("fifo.zig").Fifo;
 const Midi = @import("midi.zig");
-const ADSR = @import("ADSR.zig");
+const ADSR = @import("adsr.zig");
 const WavWritter = @import("wav_writter.zig");
 
 const c = @cImport({
@@ -190,7 +190,7 @@ pub fn main() anyerror!void {
     font = rl.loadFont("res/cozette.fnt");
     defer rl.unloadFont(font);
 
-    var adsr_params: ADSR.Parameters = .{};
+    var instrument: Voice.Instrument = .{};
 
     // one min of recording max
     var record_buffer = try alloc.alloc([2]f32, 48000 * 60);
@@ -235,9 +235,22 @@ pub fn main() anyerror!void {
                     const buff: [2]u8 = [_]u8{ field.name[0], 0 };
                     break :brk buff;
                 };
-                var modified = slider(label[0..], 100 + i * 28, 10, 16, 75, &@field(adsr_params, field.name), 0.001, 1.0);
+                var modified = slider(label[0..], 100 + i * 28, 10, 16, 75, &@field(instrument.adsr_params, field.name), 0.001, 1.0);
                 if (modified) {
-                    synth.commands.push(.{ .setADSR = .{ .value = @field(adsr_params, field.name), .index = i } }) catch {};
+                    //synth.commands.push(.{ .setADSR = .{ .value = @field(adsr_params, field.name), .index = i } }) catch {};
+                    var start = @intFromPtr(&instrument);
+                    var adsr_field = &@field(instrument.adsr_params, field.name);
+                    var fieldOffset = @intFromPtr(adsr_field) - start;
+                    var asBytes = std.mem.asBytes(adsr_field);
+
+                    var payload: [8]u8 = undefined;
+                    payload[0..asBytes.len].* = asBytes.*;
+
+                    try synth.commands.push(.{ .setCurrentInstrParam = .{
+                        .offset = fieldOffset,
+                        .payload = payload,
+                        .size = asBytes.len,
+                    } });
                 }
             }
         }
@@ -253,12 +266,13 @@ pub fn main() anyerror!void {
 
             var adsr: ADSR = .{};
 
-            prev_val = adsr.tick(0.0, adsr_params);
+            const params: ADSR.Parameters = instrument.adsr_params;
+            prev_val = adsr.tick(0.0, params);
             const samples = 150;
             adsr.setSampleRate(samples / 3);
             for (0..samples) |i| {
                 var gate: f32 = if (i < samples / 2) 1.0 else 0.0;
-                var val = adsr.tick(gate, adsr_params);
+                var val = adsr.tick(gate, instrument.adsr_params);
 
                 rl.drawLineEx(
                     .{ .x = @floatFromInt(start_x + i * step_x), .y = @floatFromInt(start_y - @as(i32, @intFromFloat(height * prev_val))) },

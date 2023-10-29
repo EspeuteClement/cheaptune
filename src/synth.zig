@@ -23,6 +23,11 @@ const Command = union(enum) {
         value: f32,
         index: usize,
     },
+    setCurrentInstrParam: struct {
+        offset: usize,
+        size: usize,
+        payload: [8]u8,
+    },
     setRenderer: struct {
         wanted: usize,
     },
@@ -150,8 +155,17 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
                 inline for (fields, 0..) |field, i| {
                     if (cmd.index == i) {
                         @field(self.base_instrument.adsr_params, field.name) = cmd.value;
+                        for (&self.voices) |*voice| {
+                            if (voice.current_instrument.id == self.base_instrument.id) {
+                                @field(voice.current_instrument.adsr_params, field.name) = cmd.value;
+                            }
+                        }
                     }
                 }
+            },
+            .setCurrentInstrParam => |cmd| {
+                var memBytes = std.mem.asBytes(&self.base_instrument)[cmd.offset..][0..cmd.size];
+                @memcpy(memBytes, cmd.payload[0..cmd.size]);
             },
             .setFilter => |cmd| {
                 for (&self.voices) |*voice| {
@@ -198,73 +212,6 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
     var sub_buffer = buffer;
     while (sub_buffer.len > 0) {
         var samples_to_render = @min(sub_buffer.len, self.workBuffer.len);
-        // brk: {
-        //     if (self.midi) |midi| {
-        //         var nextEvent: Midi.Event = midi.tracks[2][self.midi_next_event];
-        //         var delta: f32 = @floatFromInt(nextEvent.deltatime);
-
-        //         // Play events that are just happening right now
-        //         if (delta <= self.midi_time_accumulator) {
-        //             self.midi_time_accumulator -= delta;
-
-        //             // small hack
-        //             nextEvent.deltatime = 0;
-        //             while (nextEvent.deltatime == 0) {
-        //                 switch (nextEvent.data) {
-        //                     .MidiEvent => |ev| {
-        //                         switch (ev.data) {
-        //                             .NoteOn => |info| {
-        //                                 if (info.velocity > 0) {
-        //                                     var voice = self.allocateVoice();
-        //                                     voice.playNote(info.note, @as(f32, @floatFromInt(info.velocity)) / 255.0, self.base_instrument);
-        //                                 } else {
-        //                                     for (&self.voices) |*voice| {
-        //                                         if (voice.note == info.note) {
-        //                                             voice.release();
-        //                                         }
-        //                                     }
-        //                                 }
-        //                             },
-        //                             .NoteOff => |info| {
-        //                                 for (&self.voices) |*voice| {
-        //                                     if (voice.note == info.note) {
-        //                                         voice.release();
-        //                                     }
-        //                                 }
-        //                             },
-        //                             else => {},
-        //                         }
-        //                     },
-        //                     .Meta => |meta| {
-        //                         switch (meta) {
-        //                             .EndOfTrack => {
-        //                                 self.midi = null;
-        //                                 for (&self.voices) |*voice| {
-        //                                     voice.release();
-        //                                 }
-        //                                 break :brk;
-        //                             },
-        //                             else => {},
-        //                         }
-        //                     },
-        //                 }
-
-        //                 self.midi_next_event += 1;
-        //                 if (self.midi_next_event >= midi.tracks[2].len) {
-        //                     break :brk;
-        //                 }
-        //                 nextEvent = midi.tracks[2][self.midi_next_event];
-        //             }
-        //         }
-
-        //         var ticks_to_next_event: f32 = @as(f32, @floatFromInt(nextEvent.deltatime)) - self.midi_time_accumulator;
-        //         var samples_to_next_event: usize = @intFromFloat(ticks_to_next_event * self.midi_samples_per_tick);
-        //         samples_to_next_event = @max(1, samples_to_next_event);
-        //         samples_to_render = @min(samples_to_render, samples_to_next_event);
-
-        //         self.midi_time_accumulator += @as(f32, @floatFromInt(samples_to_render)) / self.midi_samples_per_tick;
-        //     }
-        // }
 
         var sample_till_next_event = self.processEvents(self.last_render_num_samples);
         samples_to_render = @min(samples_to_render, sample_till_next_event);
@@ -290,16 +237,16 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             }
         }
 
-        // for (sub_buffer[0..samples_to_render]) |*out| {
-        //     var del = out.*;
-        //     for (&del) |*d| {
-        //         d.* *= 0.5;
-        //     }
-        //     del = self.vardelay.tick(del, .{});
-        //     for (del, out) |d, *s| {
-        //         s.* += d;
-        //     }
-        // }
+        for (sub_buffer[0..samples_to_render]) |*out| {
+            var del = out.*;
+            for (&del) |*d| {
+                d.* *= self.base_instrument.delay_mix;
+            }
+            del = self.vardelay.tick(del, .{});
+            for (del, out) |d, *s| {
+                s.* += d;
+            }
+        }
 
         sub_buffer = sub_buffer[samples_to_render..];
     }

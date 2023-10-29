@@ -10,12 +10,13 @@ const sampleRate = Synth.sampleRate;
 const nyquist = Synth.nyquist;
 
 pub const Instrument = struct {
+    id: u8 = 0,
     adsr_params: ADSR.Parameters = .{},
     pulse_width: f32 = 0.5,
     mult: f32 = 1.0,
-};
 
-const default_instrument: Instrument = .{};
+    delay_mix: f32 = 1.0,
+};
 
 time: f32 = 0.0,
 time_lfo: f32 = 0.0,

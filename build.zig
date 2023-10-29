@@ -52,7 +52,7 @@ pub fn build(b: *std.Build) void {
         run_cmd.addArgs(args);
     }
 
-    run_cmd.cwd = b.exe_dir;
+    run_cmd.cwd = .{ .path = b.exe_dir };
 
     // This creates a build step. It will be visible in the `zig build --help` menu,
     // and can be selected like this: `zig build run`
