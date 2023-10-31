@@ -254,11 +254,12 @@ pub fn renderBlep(self: *Self, buffer: [][numChannels]f32) void {
     defer self.renderCommonEnd(buffer);
 
     const inc: f32 = self.cur_step;
+    const pwm = self.current_instrument.pulse_width;
     for (buffer) |*frame| {
-        var v: f32 = if (self.time < self.cur_pulse_width) 1.0 else -1.0;
+        var v: f32 = if (self.time < pwm) 1.0 else -1.0;
 
         v += blep(inc, @floatCast(self.time));
-        var tmp: f32 = @floatCast(self.time + (1.0 - self.cur_pulse_width));
+        var tmp: f32 = @floatCast(self.time + (1.0 - pwm));
         if (tmp >= 1.0)
             tmp -= 1.0;
         v -= blep(inc, tmp);

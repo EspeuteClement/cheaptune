@@ -229,17 +229,26 @@ pub fn main() anyerror!void {
         defer rl.endDrawing();
 
         {
-            const fields = @typeInfo(ADSR.Parameters).Struct.fields;
-            inline for (fields, 0..) |field, i| {
-                const label: [2]u8 = comptime brk: {
-                    const buff: [2]u8 = [_]u8{ field.name[0], 0 };
-                    break :brk buff;
-                };
-                var modified = slider(label[0..], 100 + i * 28, 10, 16, 75, &@field(instrument.adsr_params, field.name), 0.001, 1.0);
+            const fields: []const struct {
+                *f32,
+                []const u8,
+            } = &.{
+                .{ &instrument.adsr_params.attack, "Atk" },
+                .{ &instrument.adsr_params.decay, "Dec" },
+                .{ &instrument.adsr_params.sustain, "Sus" },
+                .{ &instrument.adsr_params.release, "Rel" },
+                .{ &instrument.adsr_params.volume, "Vol" },
+                .{ &instrument.delay_mix, "Del" },
+                .{ &instrument.pulse_width, "pwm" },
+            };
+
+            for (fields, 0..) |field, i| {
+                var modified = slider(field[1], 100 + @as(i32, @intCast(i)) * 28, 10, 16, 75, field[0], 0.001, 1.0);
+
                 if (modified) {
                     //synth.commands.push(.{ .setADSR = .{ .value = @field(adsr_params, field.name), .index = i } }) catch {};
                     var start = @intFromPtr(&instrument);
-                    var adsr_field = &@field(instrument.adsr_params, field.name);
+                    var adsr_field = field[0];
                     var fieldOffset = @intFromPtr(adsr_field) - start;
                     var asBytes = std.mem.asBytes(adsr_field);
 

@@ -166,6 +166,12 @@ pub fn render(self: *Self, buffer: [][numChannels]f32) void {
             .setCurrentInstrParam => |cmd| {
                 var memBytes = std.mem.asBytes(&self.base_instrument)[cmd.offset..][0..cmd.size];
                 @memcpy(memBytes, cmd.payload[0..cmd.size]);
+                for (&self.voices) |*voice| {
+                    if (voice.current_instrument.id == self.base_instrument.id) {
+                        memBytes = std.mem.asBytes(&voice.current_instrument)[cmd.offset..][0..cmd.size];
+                        @memcpy(memBytes, cmd.payload[0..cmd.size]);
+                    }
+                }
             },
             .setFilter => |cmd| {
                 for (&self.voices) |*voice| {
@@ -330,20 +336,20 @@ fn processEvents(self: *Self, samples_since_last_call: usize) usize {
     }
 
     var global_sequencer_samples: usize = std.math.maxInt(usize);
-    {
-        const event_period: f32 = 0.05; // s
-        self.global_sequencer_accumulator += fsamples_since_last_call * 1.0 / sampleRate;
+    // {
+    //     const event_period: f32 = 0.05; // s
+    //     self.global_sequencer_accumulator += fsamples_since_last_call * 1.0 / sampleRate;
 
-        if (self.global_sequencer_accumulator >= event_period) {
-            self.global_sequencer_accumulator -= event_period;
-            for (&self.voices) |*voice| {
-                voice.current_instrument.pulse_width = if (voice.current_instrument.pulse_width < 0.33) 0.5 else 0.25;
-                voice.current_instrument.mult = if (voice.current_instrument.mult > 1.0) 1.0 else 2.0;
-            }
-        }
+    //     if (self.global_sequencer_accumulator >= event_period) {
+    //         self.global_sequencer_accumulator -= event_period;
+    //         for (&self.voices) |*voice| {
+    //             voice.current_instrument.pulse_width = if (voice.current_instrument.pulse_width < 0.33) 0.5 else 0.25;
+    //             voice.current_instrument.mult = if (voice.current_instrument.mult > 1.0) 1.0 else 2.0;
+    //         }
+    //     }
 
-        global_sequencer_samples = @intFromFloat(@ceil(event_period - self.global_sequencer_accumulator));
-    }
+    //     global_sequencer_samples = @intFromFloat(@ceil(event_period - self.global_sequencer_accumulator));
+    // }
 
     return @min(global_sequencer_samples, midi_samples);
 }
